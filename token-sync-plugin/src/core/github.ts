@@ -10,7 +10,165 @@ type GitHubRequest = {
 type PushToGitHubParams = GitHubRequest & {
   base: string;
   content: TokenDocument;
+  commitMessage: string;
 };
+
+type ResolvedBranch = {
+  branch: string;
+  base: string;
+  usedDefaultFallback: boolean;
+};
+
+function normalizeRepoPart(value: string) {
+  return value.trim();
+}
+
+function normalizePath(path: string) {
+  return path.trim().replace(/^\/+/, "");
+}
+
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function bytesToBase64(bytes: number[]) {
+  let output = "";
+
+  for (let index = 0; index < bytes.length; index += 3) {
+    const byte1 = bytes[index] ?? 0;
+    const byte2 = bytes[index + 1] ?? 0;
+    const byte3 = bytes[index + 2] ?? 0;
+    const chunk = (byte1 << 16) | (byte2 << 8) | byte3;
+
+    output += BASE64_ALPHABET[(chunk >> 18) & 63];
+    output += BASE64_ALPHABET[(chunk >> 12) & 63];
+    output += index + 1 < bytes.length ? BASE64_ALPHABET[(chunk >> 6) & 63] : "=";
+    output += index + 2 < bytes.length ? BASE64_ALPHABET[chunk & 63] : "=";
+  }
+
+  return output;
+}
+
+function base64ToBytes(base64: string) {
+  const normalized = base64.replace(/\s/g, "");
+  const bytes: number[] = [];
+  let index = 0;
+
+  while (index < normalized.length) {
+    const char1 = normalized[index] ?? "A";
+    const char2 = normalized[index + 1] ?? "A";
+    const char3 = normalized[index + 2] ?? "A";
+    const char4 = normalized[index + 3] ?? "A";
+
+    const enc1 = BASE64_ALPHABET.indexOf(char1);
+    const enc2 = BASE64_ALPHABET.indexOf(char2);
+    const enc3 = char3 === "=" ? 0 : BASE64_ALPHABET.indexOf(char3);
+    const enc4 = char4 === "=" ? 0 : BASE64_ALPHABET.indexOf(char4);
+
+    const chunk = (enc1 << 18) | (enc2 << 12) | (enc3 << 6) | enc4;
+
+    bytes.push((chunk >> 16) & 255);
+
+    if (char3 !== "=") {
+      bytes.push((chunk >> 8) & 255);
+    }
+
+    if (char4 !== "=") {
+      bytes.push(chunk & 255);
+    }
+
+    index += 4;
+  }
+
+  return bytes;
+}
+
+function encodeUtf8(value: string) {
+  const bytes: number[] = [];
+  let index = 0;
+
+  while (index < value.length) {
+    const codePoint = value.codePointAt(index);
+
+    if (codePoint === undefined) {
+      break;
+    }
+
+    if (codePoint <= 0x7f) {
+      bytes.push(codePoint);
+    } else if (codePoint <= 0x7ff) {
+      bytes.push(0xc0 | (codePoint >> 6));
+      bytes.push(0x80 | (codePoint & 0x3f));
+    } else if (codePoint <= 0xffff) {
+      bytes.push(0xe0 | (codePoint >> 12));
+      bytes.push(0x80 | ((codePoint >> 6) & 0x3f));
+      bytes.push(0x80 | (codePoint & 0x3f));
+    } else {
+      bytes.push(0xf0 | (codePoint >> 18));
+      bytes.push(0x80 | ((codePoint >> 12) & 0x3f));
+      bytes.push(0x80 | ((codePoint >> 6) & 0x3f));
+      bytes.push(0x80 | (codePoint & 0x3f));
+    }
+
+    index += codePoint > 0xffff ? 2 : 1;
+  }
+
+  return bytes;
+}
+
+function decodeUtf8(bytes: number[]) {
+  let output = "";
+  let index = 0;
+
+  while (index < bytes.length) {
+    const byte1 = bytes[index];
+
+    if (byte1 === undefined) {
+      break;
+    }
+
+    if (byte1 <= 0x7f) {
+      output += String.fromCharCode(byte1);
+      index += 1;
+      continue;
+    }
+
+    if ((byte1 & 0xe0) === 0xc0) {
+      const byte2 = bytes[index + 1] ?? 0;
+      const codePoint = ((byte1 & 0x1f) << 6) | (byte2 & 0x3f);
+      output += String.fromCharCode(codePoint);
+      index += 2;
+      continue;
+    }
+
+    if ((byte1 & 0xf0) === 0xe0) {
+      const byte2 = bytes[index + 1] ?? 0;
+      const byte3 = bytes[index + 2] ?? 0;
+      const codePoint =
+        ((byte1 & 0x0f) << 12) | ((byte2 & 0x3f) << 6) | (byte3 & 0x3f);
+      output += String.fromCharCode(codePoint);
+      index += 3;
+      continue;
+    }
+
+    const byte2 = bytes[index + 1] ?? 0;
+    const byte3 = bytes[index + 2] ?? 0;
+    const byte4 = bytes[index + 3] ?? 0;
+    const codePoint =
+      ((byte1 & 0x07) << 18) |
+      ((byte2 & 0x3f) << 12) |
+      ((byte3 & 0x3f) << 6) |
+      (byte4 & 0x3f);
+    const normalized = codePoint - 0x10000;
+
+    output += String.fromCharCode(
+      0xd800 + (normalized >> 10),
+      0xdc00 + (normalized & 0x3ff)
+    );
+    index += 4;
+  }
+
+  return output;
+}
 
 async function parseGitHubResponse<T>(res: Response): Promise<T> {
   if (res.ok) {
@@ -31,6 +189,21 @@ async function parseGitHubResponse<T>(res: Response): Promise<T> {
   throw new Error(`GitHub 요청 실패: ${message}`);
 }
 
+async function getGitHubErrorMessage(res: Response) {
+  let message = `${res.status} ${res.statusText}`;
+
+  try {
+    const errorData = (await res.json()) as { message?: string };
+    if (errorData.message) {
+      message = errorData.message;
+    }
+  } catch (_error) {
+    // 응답 본문이 JSON이 아니면 상태 코드 메시지만 사용한다.
+  }
+
+  return message;
+}
+
 export async function pushToGitHub({
   token,
   repo,
@@ -38,34 +211,48 @@ export async function pushToGitHub({
   path,
   base,
   content,
+  commitMessage,
 }: PushToGitHubParams) {
-  const [owner, repoName] = repo.split("/");
+  const normalizedRepo = normalizeRepoPart(repo);
+  const normalizedBranch = normalizeRepoPart(branch);
+  const normalizedBase = normalizeRepoPart(base);
+  const normalizedPath = normalizePath(path);
+  const [owner, repoName] = normalizedRepo.split("/");
 
   if (!owner || !repoName) {
     throw new Error('저장소 형식이 잘못되었습니다. "owner/repo" 형식이어야 합니다.');
   }
 
-  // 1. 대상 브랜치가 이미 있는지 확인한다.
-  const exists = await checkBranch(owner, repoName, branch, token);
-
-  // 2. 없으면 base 브랜치를 기준으로 새 브랜치를 만든다.
-  if (!exists) {
-    const baseSha = await getBranchSha(owner, repoName, base, token);
-    await createBranch(owner, repoName, branch, baseSha, token);
+  if (!normalizedBranch) {
+    throw new Error("브랜치를 입력해 주세요.");
   }
 
-  // 3. 기존 파일이 있으면 sha를 가져와 update 요청으로 보낸다.
-  const sha = await getFileSha(owner, repoName, path, branch, token);
+  if (!normalizedBase) {
+    throw new Error("기준 브랜치를 입력해 주세요.");
+  }
 
-  // 4. tokens.json을 새로 만들거나 덮어쓴다.
+  if (!normalizedPath) {
+    throw new Error("토큰 파일 경로를 입력해 주세요.");
+  }
+
+  const normalizedCommitMessage = commitMessage.trim() || "update tokens";
+
+  const resolved = await resolvePushBranch({
+    owner,
+    repo: repoName,
+    branch: normalizedBranch,
+    base: normalizedBase,
+    token,
+  });
+
   await uploadFile({
     owner,
     repo: repoName,
-    path,
+    path: normalizedPath,
     content: JSON.stringify(content, null, 2),
-    branch,
+    branch: resolved.branch,
     token,
-    sha,
+    commitMessage: normalizedCommitMessage,
   });
 }
 
@@ -75,24 +262,40 @@ export async function pullFromGitHub({
   branch,
   path,
 }: GitHubRequest): Promise<TokenTree | TokenDocument> {
-  const [owner, repoName] = repo.split("/");
+  const normalizedRepo = normalizeRepoPart(repo);
+  const normalizedBranch = normalizeRepoPart(branch);
+  const normalizedPath = normalizePath(path);
+  const [owner, repoName] = normalizedRepo.split("/");
 
   if (!owner || !repoName) {
     throw new Error('저장소 형식이 잘못되었습니다. "owner/repo" 형식이어야 합니다.');
   }
 
+  if (!normalizedBranch) {
+    throw new Error("브랜치를 입력해 주세요.");
+  }
+
+  if (!normalizedPath) {
+    throw new Error("토큰 파일 경로를 입력해 주세요.");
+  }
+
   // GitHub contents API는 파일 내용을 base64로 반환한다.
   const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repoName}/contents/${path}?ref=${branch}`,
+    `https://api.github.com/repos/${owner}/${repoName}/contents/${normalizedPath}?ref=${normalizedBranch}`,
     {
       headers: { Authorization: `token ${token}` },
     }
   );
 
+  if (res.status === 404) {
+    throw new Error(
+      `원격 파일을 찾을 수 없습니다: ${owner}/${repoName}@${normalizedBranch}:${normalizedPath}. 파일이 없으면 Push로 먼저 생성해 주세요.`
+    );
+  }
+
   const data = await parseGitHubResponse<{ content: string }>(res);
 
-  // Figma 런타임에서 한글/유니코드가 깨지지 않게 문자열로 복원한다.
-  const decoded = decodeURIComponent(escape(atob(data.content)));
+  const decoded = decodeUtf8(base64ToBytes(data.content));
 
   return JSON.parse(decoded) as TokenTree | TokenDocument;
 }
@@ -111,6 +314,15 @@ async function checkBranch(
   );
 
   return res.status === 200;
+}
+
+async function getDefaultBranch(owner: string, repo: string, token: string) {
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    headers: { Authorization: `token ${token}` },
+  });
+
+  const data = await parseGitHubResponse<{ default_branch: string }>(res);
+  return data.default_branch;
 }
 
 async function getBranchSha(
@@ -152,6 +364,80 @@ async function createBranch(
   await parseGitHubResponse(res);
 }
 
+async function ensureBranchExists(params: {
+  owner: string;
+  repo: string;
+  branch: string;
+  base: string;
+  token: string;
+}) {
+  const { owner, repo, branch, base, token } = params;
+  const exists = await checkBranch(owner, repo, branch, token);
+
+  if (exists) {
+    return;
+  }
+
+  if (branch === base) {
+    throw new Error(`브랜치를 찾을 수 없습니다: ${branch}`);
+  }
+
+  const baseSha = await getBranchSha(owner, repo, base, token);
+  await createBranch(owner, repo, branch, baseSha, token);
+}
+
+async function resolvePushBranch(params: {
+  owner: string;
+  repo: string;
+  branch: string;
+  base: string;
+  token: string;
+}): Promise<ResolvedBranch> {
+  const { owner, repo, branch, base, token } = params;
+
+  try {
+    await ensureBranchExists({ owner, repo, branch, base, token });
+
+    return {
+      branch,
+      base,
+      usedDefaultFallback: false,
+    };
+  } catch (_error) {
+    const defaultBranch = await getDefaultBranch(owner, repo, token);
+
+    if (branch === defaultBranch) {
+      await ensureBranchExists({
+        owner,
+        repo,
+        branch: defaultBranch,
+        base: defaultBranch,
+        token,
+      });
+
+      return {
+        branch: defaultBranch,
+        base: defaultBranch,
+        usedDefaultFallback: true,
+      };
+    }
+
+    await ensureBranchExists({
+      owner,
+      repo,
+      branch,
+      base: defaultBranch,
+      token,
+    });
+
+    return {
+      branch,
+      base: defaultBranch,
+      usedDefaultFallback: true,
+    };
+  }
+}
+
 async function getFileSha(
   owner: string,
   repo: string,
@@ -166,15 +452,16 @@ async function getFileSha(
     }
   );
 
-  if (res.status !== 200) return null;
+  if (res.status === 404) {
+    return null;
+  }
 
   const data = await parseGitHubResponse<{ sha: string }>(res);
   return data.sha;
 }
 
 function encode(content: string) {
-  // 업로드 전 contents API 요구사항에 맞게 base64로 인코딩한다.
-  return btoa(unescape(encodeURIComponent(content)));
+  return bytesToBase64(encodeUtf8(content));
 }
 
 async function uploadFile({
@@ -184,7 +471,7 @@ async function uploadFile({
   content,
   branch,
   token,
-  sha,
+  commitMessage,
 }: {
   owner: string;
   repo: string;
@@ -192,25 +479,20 @@ async function uploadFile({
   content: string;
   branch: string;
   token: string;
-  sha: string | null;
+  commitMessage: string;
 }) {
-  // sha가 있으면 update, 없으면 create로 처리된다.
   const requestBody: {
     message: string;
     content: string;
     branch: string;
     sha?: string;
   } = {
-    message: "update tokens",
+    message: commitMessage,
     content: encode(content),
     branch,
   };
 
-  if (sha) {
-    requestBody.sha = sha;
-  }
-
-  const res = await fetch(
+  const createRes = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
     {
       method: "PUT",
@@ -222,5 +504,37 @@ async function uploadFile({
     }
   );
 
-  await parseGitHubResponse(res);
+  if (createRes.ok) {
+    await createRes.json();
+    return;
+  }
+
+  // 파일이 이미 있으면 sha를 포함해 overwrite로 재시도한다.
+  if (createRes.status !== 422) {
+    const message = await getGitHubErrorMessage(createRes);
+    throw new Error(`GitHub 요청 실패: ${message}`);
+  }
+
+  const sha = await getFileSha(owner, repo, path, branch, token);
+
+  if (!sha) {
+    const message = await getGitHubErrorMessage(createRes);
+    throw new Error(`GitHub 요청 실패: ${message}`);
+  }
+
+  requestBody.sha = sha;
+
+  const updateRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `token ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    }
+  );
+
+  await parseGitHubResponse(updateRes);
 }

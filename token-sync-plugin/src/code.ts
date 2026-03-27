@@ -7,6 +7,14 @@ import { PluginMessage, TokenDocument } from "./core/types";
 // Figma 메인 컨텍스트에서 표시할 UI 크기만 고정한다.
 figma.showUI(__html__, { width: 420, height: 720 });
 
+function formatError(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack || `${error.name}: ${error.message}`;
+  }
+
+  return String(error);
+}
+
 function postPreviewContent(content: string) {
   figma.ui.postMessage({
     type: "PREVIEW_RESULT",
@@ -15,7 +23,7 @@ function postPreviewContent(content: string) {
 }
 
 function postPreviewError(error: unknown) {
-  postPreviewContent(`{}\n\n/* Preview unavailable: ${String(error)} */`);
+  postPreviewContent(`{}\n\n/* Preview unavailable: ${formatError(error)} */`);
 }
 
 function toPreviewContent(tokens: unknown) {
@@ -92,6 +100,7 @@ figma.ui.onmessage = async (msg: PluginMessage) => {
         path: msg.path,
         base: msg.base,
         content: tokens,
+        commitMessage: msg.commitMessage,
       });
 
       figma.ui.postMessage({ type: "SUCCESS", action: "push" });
@@ -113,7 +122,6 @@ figma.ui.onmessage = async (msg: PluginMessage) => {
       syncPreviewToUI();
     }
   } catch (e) {
-    // UI는 문자열 메시지만 표시하므로 여기서 에러를 단순화한다.
-    figma.ui.postMessage({ type: "ERROR", error: String(e) });
+    figma.ui.postMessage({ type: "ERROR", error: formatError(e) });
   }
 };

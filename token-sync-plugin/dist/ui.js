@@ -57,6 +57,7 @@
     const branch = document.getElementById("branch").value;
     const base = document.getElementById("base").value;
     const path = document.getElementById("path").value || "tokens.json";
+    const commitMessage = document.getElementById("commit-message").value || "update tokens";
     parent.postMessage(
       {
         pluginMessage: {
@@ -65,7 +66,8 @@
           repo,
           branch,
           base,
-          path
+          path,
+          commitMessage
         }
       },
       "*"
@@ -111,9 +113,7 @@
       log("\uC5D0\uB7EC: " + msg.error);
     }
   }
-  window.onmessage = handlePluginMessage;
   window.addEventListener("message", handlePluginMessage);
-  self.onmessage = handlePluginMessage;
   notifyUiReady();
   requestPreview();
 })();

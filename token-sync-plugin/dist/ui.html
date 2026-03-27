@@ -255,6 +255,10 @@
             Token File Path
             <input id="path" placeholder="tokens.json" value="tokens.json" />
           </label>
+          <label>
+            Commit Message
+            <input id="commit-message" placeholder="chore: update tokens" value="update tokens" />
+          </label>
         </div>
 
         <!-- push/pull 결과는 아래 로그 영역에 누적된다. -->
@@ -335,6 +339,7 @@
     const branch = document.getElementById("branch").value;
     const base = document.getElementById("base").value;
     const path = document.getElementById("path").value || "tokens.json";
+    const commitMessage = document.getElementById("commit-message").value || "update tokens";
     parent.postMessage(
       {
         pluginMessage: {
@@ -343,7 +348,8 @@
           repo,
           branch,
           base,
-          path
+          path,
+          commitMessage
         }
       },
       "*"
@@ -389,9 +395,7 @@
       log("\uC5D0\uB7EC: " + msg.error);
     }
   }
-  window.onmessage = handlePluginMessage;
   window.addEventListener("message", handlePluginMessage);
-  self.onmessage = handlePluginMessage;
   notifyUiReady();
   requestPreview();
 })();

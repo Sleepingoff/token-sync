@@ -81,6 +81,9 @@ document.getElementById("push")!.onclick = () => {
   const branch = (document.getElementById("branch") as HTMLInputElement).value;
   const base = (document.getElementById("base") as HTMLInputElement).value;
   const path = (document.getElementById("path") as HTMLInputElement).value || "tokens.json";
+  const commitMessage =
+    (document.getElementById("commit-message") as HTMLInputElement).value ||
+    "update tokens";
 
   // UI iframe에서 Figma 메인 컨텍스트로 push 요청을 전달한다.
   parent.postMessage(
@@ -92,6 +95,7 @@ document.getElementById("push")!.onclick = () => {
         branch,
         base,
         path,
+        commitMessage,
       },
     },
     "*"
@@ -143,9 +147,7 @@ function handlePluginMessage(event: MessageEvent) {
   }
 }
 
-window.onmessage = handlePluginMessage;
 window.addEventListener("message", handlePluginMessage);
-self.onmessage = handlePluginMessage;
 
 notifyUiReady();
 requestPreview();

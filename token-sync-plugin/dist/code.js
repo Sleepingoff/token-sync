@@ -406,6 +406,123 @@
   }
 
   // src/core/github.ts
+  function normalizeRepoPart(value) {
+    return value.trim();
+  }
+  function normalizePath(path) {
+    return path.trim().replace(/^\/+/, "");
+  }
+  var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function bytesToBase64(bytes) {
+    var _a, _b, _c;
+    let output = "";
+    for (let index = 0; index < bytes.length; index += 3) {
+      const byte1 = (_a = bytes[index]) != null ? _a : 0;
+      const byte2 = (_b = bytes[index + 1]) != null ? _b : 0;
+      const byte3 = (_c = bytes[index + 2]) != null ? _c : 0;
+      const chunk = byte1 << 16 | byte2 << 8 | byte3;
+      output += BASE64_ALPHABET[chunk >> 18 & 63];
+      output += BASE64_ALPHABET[chunk >> 12 & 63];
+      output += index + 1 < bytes.length ? BASE64_ALPHABET[chunk >> 6 & 63] : "=";
+      output += index + 2 < bytes.length ? BASE64_ALPHABET[chunk & 63] : "=";
+    }
+    return output;
+  }
+  function base64ToBytes(base64) {
+    var _a, _b, _c, _d;
+    const normalized = base64.replace(/\s/g, "");
+    const bytes = [];
+    let index = 0;
+    while (index < normalized.length) {
+      const char1 = (_a = normalized[index]) != null ? _a : "A";
+      const char2 = (_b = normalized[index + 1]) != null ? _b : "A";
+      const char3 = (_c = normalized[index + 2]) != null ? _c : "A";
+      const char4 = (_d = normalized[index + 3]) != null ? _d : "A";
+      const enc1 = BASE64_ALPHABET.indexOf(char1);
+      const enc2 = BASE64_ALPHABET.indexOf(char2);
+      const enc3 = char3 === "=" ? 0 : BASE64_ALPHABET.indexOf(char3);
+      const enc4 = char4 === "=" ? 0 : BASE64_ALPHABET.indexOf(char4);
+      const chunk = enc1 << 18 | enc2 << 12 | enc3 << 6 | enc4;
+      bytes.push(chunk >> 16 & 255);
+      if (char3 !== "=") {
+        bytes.push(chunk >> 8 & 255);
+      }
+      if (char4 !== "=") {
+        bytes.push(chunk & 255);
+      }
+      index += 4;
+    }
+    return bytes;
+  }
+  function encodeUtf8(value) {
+    const bytes = [];
+    let index = 0;
+    while (index < value.length) {
+      const codePoint = value.codePointAt(index);
+      if (codePoint === void 0) {
+        break;
+      }
+      if (codePoint <= 127) {
+        bytes.push(codePoint);
+      } else if (codePoint <= 2047) {
+        bytes.push(192 | codePoint >> 6);
+        bytes.push(128 | codePoint & 63);
+      } else if (codePoint <= 65535) {
+        bytes.push(224 | codePoint >> 12);
+        bytes.push(128 | codePoint >> 6 & 63);
+        bytes.push(128 | codePoint & 63);
+      } else {
+        bytes.push(240 | codePoint >> 18);
+        bytes.push(128 | codePoint >> 12 & 63);
+        bytes.push(128 | codePoint >> 6 & 63);
+        bytes.push(128 | codePoint & 63);
+      }
+      index += codePoint > 65535 ? 2 : 1;
+    }
+    return bytes;
+  }
+  function decodeUtf8(bytes) {
+    var _a, _b, _c, _d, _e, _f;
+    let output = "";
+    let index = 0;
+    while (index < bytes.length) {
+      const byte1 = bytes[index];
+      if (byte1 === void 0) {
+        break;
+      }
+      if (byte1 <= 127) {
+        output += String.fromCharCode(byte1);
+        index += 1;
+        continue;
+      }
+      if ((byte1 & 224) === 192) {
+        const byte22 = (_a = bytes[index + 1]) != null ? _a : 0;
+        const codePoint2 = (byte1 & 31) << 6 | byte22 & 63;
+        output += String.fromCharCode(codePoint2);
+        index += 2;
+        continue;
+      }
+      if ((byte1 & 240) === 224) {
+        const byte22 = (_b = bytes[index + 1]) != null ? _b : 0;
+        const byte32 = (_c = bytes[index + 2]) != null ? _c : 0;
+        const codePoint2 = (byte1 & 15) << 12 | (byte22 & 63) << 6 | byte32 & 63;
+        output += String.fromCharCode(codePoint2);
+        index += 3;
+        continue;
+      }
+      const byte2 = (_d = bytes[index + 1]) != null ? _d : 0;
+      const byte3 = (_e = bytes[index + 2]) != null ? _e : 0;
+      const byte4 = (_f = bytes[index + 3]) != null ? _f : 0;
+      const codePoint = (byte1 & 7) << 18 | (byte2 & 63) << 12 | (byte3 & 63) << 6 | byte4 & 63;
+      const normalized = codePoint - 65536;
+      output += String.fromCharCode(
+        55296 + (normalized >> 10),
+        56320 + (normalized & 1023)
+      );
+      index += 4;
+    }
+    return output;
+  }
   async function parseGitHubResponse(res) {
     if (res.ok) {
       return res.json();
@@ -420,32 +537,59 @@
     }
     throw new Error(`GitHub \uC694\uCCAD \uC2E4\uD328: ${message}`);
   }
+  async function getGitHubErrorMessage(res) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const errorData = await res.json();
+      if (errorData.message) {
+        message = errorData.message;
+      }
+    } catch (_error) {
+    }
+    return message;
+  }
   async function pushToGitHub({
     token,
     repo,
     branch,
     path,
     base,
-    content
+    content,
+    commitMessage
   }) {
-    const [owner, repoName] = repo.split("/");
+    const normalizedRepo = normalizeRepoPart(repo);
+    const normalizedBranch = normalizeRepoPart(branch);
+    const normalizedBase = normalizeRepoPart(base);
+    const normalizedPath = normalizePath(path);
+    const [owner, repoName] = normalizedRepo.split("/");
     if (!owner || !repoName) {
       throw new Error('\uC800\uC7A5\uC18C \uD615\uC2DD\uC774 \uC798\uBABB\uB418\uC5C8\uC2B5\uB2C8\uB2E4. "owner/repo" \uD615\uC2DD\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.');
     }
-    const exists = await checkBranch(owner, repoName, branch, token);
-    if (!exists) {
-      const baseSha = await getBranchSha(owner, repoName, base, token);
-      await createBranch(owner, repoName, branch, baseSha, token);
+    if (!normalizedBranch) {
+      throw new Error("\uBE0C\uB79C\uCE58\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
     }
-    const sha = await getFileSha(owner, repoName, path, branch, token);
+    if (!normalizedBase) {
+      throw new Error("\uAE30\uC900 \uBE0C\uB79C\uCE58\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    if (!normalizedPath) {
+      throw new Error("\uD1A0\uD070 \uD30C\uC77C \uACBD\uB85C\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    const normalizedCommitMessage = commitMessage.trim() || "update tokens";
+    const resolved = await resolvePushBranch({
+      owner,
+      repo: repoName,
+      branch: normalizedBranch,
+      base: normalizedBase,
+      token
+    });
     await uploadFile({
       owner,
       repo: repoName,
-      path,
+      path: normalizedPath,
       content: JSON.stringify(content, null, 2),
-      branch,
+      branch: resolved.branch,
       token,
-      sha
+      commitMessage: normalizedCommitMessage
     });
   }
   async function pullFromGitHub({
@@ -454,18 +598,32 @@
     branch,
     path
   }) {
-    const [owner, repoName] = repo.split("/");
+    const normalizedRepo = normalizeRepoPart(repo);
+    const normalizedBranch = normalizeRepoPart(branch);
+    const normalizedPath = normalizePath(path);
+    const [owner, repoName] = normalizedRepo.split("/");
     if (!owner || !repoName) {
       throw new Error('\uC800\uC7A5\uC18C \uD615\uC2DD\uC774 \uC798\uBABB\uB418\uC5C8\uC2B5\uB2C8\uB2E4. "owner/repo" \uD615\uC2DD\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.');
     }
+    if (!normalizedBranch) {
+      throw new Error("\uBE0C\uB79C\uCE58\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    if (!normalizedPath) {
+      throw new Error("\uD1A0\uD070 \uD30C\uC77C \uACBD\uB85C\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
     const res = await fetch(
-      `https://api.github.com/repos/${owner}/${repoName}/contents/${path}?ref=${branch}`,
+      `https://api.github.com/repos/${owner}/${repoName}/contents/${normalizedPath}?ref=${normalizedBranch}`,
       {
         headers: { Authorization: `token ${token}` }
       }
     );
+    if (res.status === 404) {
+      throw new Error(
+        `\uC6D0\uACA9 \uD30C\uC77C\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4: ${owner}/${repoName}@${normalizedBranch}:${normalizedPath}. \uD30C\uC77C\uC774 \uC5C6\uC73C\uBA74 Push\uB85C \uBA3C\uC800 \uC0DD\uC131\uD574 \uC8FC\uC138\uC694.`
+      );
+    }
     const data = await parseGitHubResponse(res);
-    const decoded = decodeURIComponent(escape(atob(data.content)));
+    const decoded = decodeUtf8(base64ToBytes(data.content));
     return JSON.parse(decoded);
   }
   async function checkBranch(owner, repo, branch, token) {
@@ -476,6 +634,13 @@
       }
     );
     return res.status === 200;
+  }
+  async function getDefaultBranch(owner, repo, token) {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: { Authorization: `token ${token}` }
+    });
+    const data = await parseGitHubResponse(res);
+    return data.default_branch;
   }
   async function getBranchSha(owner, repo, branch, token) {
     const res = await fetch(
@@ -501,6 +666,57 @@
     });
     await parseGitHubResponse(res);
   }
+  async function ensureBranchExists(params) {
+    const { owner, repo, branch, base, token } = params;
+    const exists = await checkBranch(owner, repo, branch, token);
+    if (exists) {
+      return;
+    }
+    if (branch === base) {
+      throw new Error(`\uBE0C\uB79C\uCE58\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4: ${branch}`);
+    }
+    const baseSha = await getBranchSha(owner, repo, base, token);
+    await createBranch(owner, repo, branch, baseSha, token);
+  }
+  async function resolvePushBranch(params) {
+    const { owner, repo, branch, base, token } = params;
+    try {
+      await ensureBranchExists({ owner, repo, branch, base, token });
+      return {
+        branch,
+        base,
+        usedDefaultFallback: false
+      };
+    } catch (_error) {
+      const defaultBranch = await getDefaultBranch(owner, repo, token);
+      if (branch === defaultBranch) {
+        await ensureBranchExists({
+          owner,
+          repo,
+          branch: defaultBranch,
+          base: defaultBranch,
+          token
+        });
+        return {
+          branch: defaultBranch,
+          base: defaultBranch,
+          usedDefaultFallback: true
+        };
+      }
+      await ensureBranchExists({
+        owner,
+        repo,
+        branch,
+        base: defaultBranch,
+        token
+      });
+      return {
+        branch,
+        base: defaultBranch,
+        usedDefaultFallback: true
+      };
+    }
+  }
   async function getFileSha(owner, repo, path, branch, token) {
     const res = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`,
@@ -508,13 +724,14 @@
         headers: { Authorization: `token ${token}` }
       }
     );
-    if (res.status !== 200)
+    if (res.status === 404) {
       return null;
+    }
     const data = await parseGitHubResponse(res);
     return data.sha;
   }
   function encode(content) {
-    return btoa(unescape(encodeURIComponent(content)));
+    return bytesToBase64(encodeUtf8(content));
   }
   async function uploadFile({
     owner,
@@ -523,17 +740,14 @@
     content,
     branch,
     token,
-    sha
+    commitMessage
   }) {
     const requestBody = {
-      message: "update tokens",
+      message: commitMessage,
       content: encode(content),
       branch
     };
-    if (sha) {
-      requestBody.sha = sha;
-    }
-    const res = await fetch(
+    const createRes = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
       {
         method: "PUT",
@@ -544,7 +758,32 @@
         body: JSON.stringify(requestBody)
       }
     );
-    await parseGitHubResponse(res);
+    if (createRes.ok) {
+      await createRes.json();
+      return;
+    }
+    if (createRes.status !== 422) {
+      const message = await getGitHubErrorMessage(createRes);
+      throw new Error(`GitHub \uC694\uCCAD \uC2E4\uD328: ${message}`);
+    }
+    const sha = await getFileSha(owner, repo, path, branch, token);
+    if (!sha) {
+      const message = await getGitHubErrorMessage(createRes);
+      throw new Error(`GitHub \uC694\uCCAD \uC2E4\uD328: ${message}`);
+    }
+    requestBody.sha = sha;
+    const updateRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `token ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody)
+      }
+    );
+    await parseGitHubResponse(updateRes);
   }
 
   // src/core/apply.ts
@@ -638,6 +877,12 @@
 
   // src/code.ts
   figma.showUI(__html__, { width: 420, height: 720 });
+  function formatError(error) {
+    if (error instanceof Error) {
+      return error.stack || `${error.name}: ${error.message}`;
+    }
+    return String(error);
+  }
   function postPreviewContent(content) {
     figma.ui.postMessage({
       type: "PREVIEW_RESULT",
@@ -647,7 +892,7 @@
   function postPreviewError(error) {
     postPreviewContent(`{}
 
-/* Preview unavailable: ${String(error)} */`);
+/* Preview unavailable: ${formatError(error)} */`);
   }
   function toPreviewContent(tokens) {
     return JSON.stringify(tokens, null, 2);
@@ -704,7 +949,8 @@
           branch: msg.branch,
           path: msg.path,
           base: msg.base,
-          content: tokens
+          content: tokens,
+          commitMessage: msg.commitMessage
         });
         figma.ui.postMessage({ type: "SUCCESS", action: "push" });
         syncPreviewToUI();
@@ -721,7 +967,7 @@
         syncPreviewToUI();
       }
     } catch (e) {
-      figma.ui.postMessage({ type: "ERROR", error: String(e) });
+      figma.ui.postMessage({ type: "ERROR", error: formatError(e) });
     }
   };
 })();

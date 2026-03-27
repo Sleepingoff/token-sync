@@ -50,6 +50,7 @@ export type PushMessage = {
   branch: string;
   base: string;
   path: string;
+  commitMessage: string;
 };
 
 export type PullMessage = {
