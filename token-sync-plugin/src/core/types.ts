@@ -61,6 +61,19 @@ export type PullMessage = {
   path: string;
 };
 
+export type PersistedSettings = {
+  token: string;
+  repo: string;
+  branch: string;
+  base: string;
+  path: string;
+  commitMessage: string;
+};
+
+export type SaveSettingsMessage = PersistedSettings & {
+  type: "SAVE_SETTINGS";
+};
+
 export type PreviewMessage = {
   type: "PREVIEW";
 };
@@ -69,4 +82,9 @@ export type UiReadyMessage = {
   type: "UI_READY";
 };
 
-export type PluginMessage = PushMessage | PullMessage | PreviewMessage | UiReadyMessage;
+export type PluginMessage =
+  | PushMessage
+  | PullMessage
+  | SaveSettingsMessage
+  | PreviewMessage
+  | UiReadyMessage;

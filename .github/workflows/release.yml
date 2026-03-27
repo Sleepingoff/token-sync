@@ -1,0 +1,22 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - run: npm install
+      - run: npm run build
+
+      - run: zip -r token-sync-plugin.zip manifest.json dist
+
+      - uses: softprops/action-gh-release@v1
+        with:
+          files: token-sync-plugin.zip

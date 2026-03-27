@@ -2,10 +2,12 @@ import { extractStyleTokens, extractVariables } from "./core/extract";
 import { transformTokens } from "./core/transform";
 import { pushToGitHub, pullFromGitHub } from "./core/github";
 import { applyTokens } from "./core/apply";
-import { PluginMessage, TokenDocument } from "./core/types";
+import { PersistedSettings, PluginMessage, TokenDocument } from "./core/types";
 
 // Figma 메인 컨텍스트에서 표시할 UI 크기만 고정한다.
 figma.showUI(__html__, { width: 420, height: 720 });
+
+const SETTINGS_KEY = "token-sync-settings";
 
 function formatError(error: unknown) {
   if (error instanceof Error) {
@@ -28,6 +30,30 @@ function postPreviewError(error: unknown) {
 
 function toPreviewContent(tokens: unknown) {
   return JSON.stringify(tokens, null, 2);
+}
+
+function defaultSettings(): PersistedSettings {
+  return {
+    token: "",
+    repo: "",
+    branch: "",
+    base: "main",
+    path: "tokens.json",
+    commitMessage: "update tokens",
+  };
+}
+
+async function loadSettings() {
+  const stored = await figma.clientStorage.getAsync(SETTINGS_KEY);
+
+  return {
+    ...defaultSettings(),
+    ...(stored as Partial<PersistedSettings> | null),
+  };
+}
+
+async function saveSettings(settings: PersistedSettings) {
+  await figma.clientStorage.setAsync(SETTINGS_KEY, settings);
 }
 
 function emptyTokenDocument(): TokenDocument {
@@ -80,6 +106,10 @@ figma.on("stylechange", () => {
 figma.ui.onmessage = async (msg: PluginMessage) => {
   try {
     if (msg.type === "UI_READY") {
+      figma.ui.postMessage({
+        type: "SETTINGS_LOADED",
+        settings: await loadSettings(),
+      });
       syncPreviewToUI();
       return;
     }
@@ -89,9 +119,30 @@ figma.ui.onmessage = async (msg: PluginMessage) => {
       return;
     }
 
+    if (msg.type === "SAVE_SETTINGS") {
+      await saveSettings({
+        token: msg.token,
+        repo: msg.repo,
+        branch: msg.branch,
+        base: msg.base,
+        path: msg.path,
+        commitMessage: msg.commitMessage,
+      });
+      return;
+    }
+
     if (msg.type === "PUSH") {
       // 로컬 변수 -> 토큰 JSON 구조로 변환한 뒤 GitHub에 업로드한다.
       const tokens = getCurrentTokens();
+
+      await saveSettings({
+        token: msg.token,
+        repo: msg.repo,
+        branch: msg.branch,
+        base: msg.base,
+        path: msg.path,
+        commitMessage: msg.commitMessage,
+      });
 
       await pushToGitHub({
         token: msg.token,
@@ -109,6 +160,17 @@ figma.ui.onmessage = async (msg: PluginMessage) => {
 
     if (msg.type === "PULL") {
       // GitHub의 tokens.json을 읽어서 현재 Figma 변수에 반영한다.
+      const settings = await loadSettings();
+
+      await saveSettings({
+        token: msg.token,
+        repo: msg.repo,
+        branch: msg.branch,
+        base: settings.base,
+        path: msg.path,
+        commitMessage: settings.commitMessage,
+      });
+
       const tokens = await pullFromGitHub({
         token: msg.token,
         repo: msg.repo,

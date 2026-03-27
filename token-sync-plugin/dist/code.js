@@ -877,6 +877,7 @@
 
   // src/code.ts
   figma.showUI(__html__, { width: 420, height: 720 });
+  var SETTINGS_KEY = "token-sync-settings";
   function formatError(error) {
     if (error instanceof Error) {
       return error.stack || `${error.name}: ${error.message}`;
@@ -896,6 +897,23 @@
   }
   function toPreviewContent(tokens) {
     return JSON.stringify(tokens, null, 2);
+  }
+  function defaultSettings() {
+    return {
+      token: "",
+      repo: "",
+      branch: "",
+      base: "main",
+      path: "tokens.json",
+      commitMessage: "update tokens"
+    };
+  }
+  async function loadSettings() {
+    const stored = await figma.clientStorage.getAsync(SETTINGS_KEY);
+    return __spreadValues(__spreadValues({}, defaultSettings()), stored);
+  }
+  async function saveSettings(settings) {
+    await figma.clientStorage.setAsync(SETTINGS_KEY, settings);
   }
   function emptyTokenDocument() {
     return {
@@ -934,6 +952,10 @@
   figma.ui.onmessage = async (msg) => {
     try {
       if (msg.type === "UI_READY") {
+        figma.ui.postMessage({
+          type: "SETTINGS_LOADED",
+          settings: await loadSettings()
+        });
         syncPreviewToUI();
         return;
       }
@@ -941,8 +963,27 @@
         syncPreviewToUI();
         return;
       }
+      if (msg.type === "SAVE_SETTINGS") {
+        await saveSettings({
+          token: msg.token,
+          repo: msg.repo,
+          branch: msg.branch,
+          base: msg.base,
+          path: msg.path,
+          commitMessage: msg.commitMessage
+        });
+        return;
+      }
       if (msg.type === "PUSH") {
         const tokens = getCurrentTokens();
+        await saveSettings({
+          token: msg.token,
+          repo: msg.repo,
+          branch: msg.branch,
+          base: msg.base,
+          path: msg.path,
+          commitMessage: msg.commitMessage
+        });
         await pushToGitHub({
           token: msg.token,
           repo: msg.repo,
@@ -956,6 +997,15 @@
         syncPreviewToUI();
       }
       if (msg.type === "PULL") {
+        const settings = await loadSettings();
+        await saveSettings({
+          token: msg.token,
+          repo: msg.repo,
+          branch: msg.branch,
+          base: settings.base,
+          path: msg.path,
+          commitMessage: settings.commitMessage
+        });
         const tokens = await pullFromGitHub({
           token: msg.token,
           repo: msg.repo,
