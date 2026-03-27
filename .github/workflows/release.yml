@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,11 +15,29 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - run: npm install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: token-sync-plugin/package-lock.json
+
+      - name: Read package version
+        id: version
+        run: echo "value=$(jq -r '.version' token-sync-plugin/package.json)" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+        working-directory: token-sync-plugin
+
       - run: npm run build
+        working-directory: token-sync-plugin
 
       - run: zip -r token-sync-plugin.zip manifest.json dist
+        working-directory: token-sync-plugin
 
       - uses: softprops/action-gh-release@v1
         with:
-          files: token-sync-plugin.zip
+          tag_name: v${{ steps.version.outputs.value }}
+          name: v${{ steps.version.outputs.value }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: token-sync-plugin/token-sync-plugin.zip
