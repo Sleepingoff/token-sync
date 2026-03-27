@@ -42,9 +42,9 @@ npm install style-dictionary @tokens-studio/sd-transforms
 
 이 저장소에는 바로 참고할 수 있는 예시 파일도 포함되어 있습니다.
 
-- [style-dictionary.config.mjs](./style-dictionary.config.mjs): Style Dictionary 설정 예시
-- [build-style-dictionary.mjs](./scripts/build-style-dictionary.mjs): 로컬 빌드 실행 스크립트
-- [style-dictionary.yml](./.github/workflows/style-dictionary.yml): GitHub Actions 예시 workflow
+- [style-dictionary.config.mjs](./token-sync-plugin/style-dictionary.config.mjs): Style Dictionary 설정 예시
+- [build-style-dictionary.mjs](./token-sync-plugin/scripts/build-style-dictionary.mjs): 로컬 빌드 실행 스크립트
+- [style-dictionary.yml](./token-sync-plugin/.github/workflows/style-dictionary.yml): GitHub Actions 예시 workflow
 
 로컬에서 직접 변환을 실행하려면 아래 명령을 사용할 수 있습니다.
 
@@ -62,9 +62,9 @@ npm run build:tokens -- --input tokens.json --output build/tokens/
 
 이 저장소에는 GitHub push를 기준으로 Style Dictionary 변환을 실행할 수 있는 workflow 예시가 포함되어 있습니다.
 
-- workflow 파일: [style-dictionary.yml](./.github/workflows/style-dictionary.yml)
-- 설정 파일: [style-dictionary.config.mjs](./style-dictionary.config.mjs)
-- 실행 스크립트: [build-style-dictionary.mjs](./scripts/build-style-dictionary.mjs)
+- workflow 파일: [style-dictionary.yml](./token-sync-plugin/.github/workflows/style-dictionary.yml)
+- 설정 파일: [style-dictionary.config.mjs](./token-sync-plugin/style-dictionary.config.mjs)
+- 실행 스크립트: [build-style-dictionary.mjs](./token-sync-plugin/scripts/build-style-dictionary.mjs)
 
 기본 동작은 다음과 같습니다.
 
@@ -141,7 +141,7 @@ npm run watch
 
 1. Figma Desktop 실행
 2. `Plugins > Development > Import plugin from manifest...`
-3. 프로젝트의 [manifest.json](./manifest.json) 선택
+3. 프로젝트의 [manifest.json](./token-sync-plugin/manifest.json) 선택
 
 ## 사용 방법
 
@@ -167,14 +167,14 @@ npm run watch
 
 ## 프로젝트 구조
 
-- [src/code.ts](./src/code.ts): Figma 메인 컨텍스트, UI 메시지 처리
-- [src/ui.ts](./src/ui.ts): 플러그인 UI 이벤트 처리
-- [src/ui.html](./src/ui.html): 간단한 입력 UI
-- [src/core/extract.ts](./src/core/extract.ts): Figma Variables 추출
-- [src/core/transform.ts](./src/core/transform.ts): Variables를 토큰 JSON으로 변환
-- [src/core/apply.ts](./src/core/apply.ts): 토큰 JSON을 Figma Variables에 반영
-- [src/core/github.ts](./src/core/github.ts): GitHub API 연동
-- [src/core/types.ts](./src/core/types.ts): 공통 타입 정의
+- [src/code.ts](./token-sync-plugin/src/code.ts): Figma 메인 컨텍스트, UI 메시지 처리
+- [src/ui.ts](./token-sync-plugin/src/ui.ts): 플러그인 UI 이벤트 처리
+- [src/ui.html](./token-sync-plugin/src/ui.html): 간단한 입력 UI
+- [src/core/extract.ts](./token-sync-plugin/src/core/extract.ts): Figma Variables 추출
+- [src/core/transform.ts](./token-sync-plugin/src/core/transform.ts): Variables를 토큰 JSON으로 변환
+- [src/core/apply.ts](./token-sync-plugin/src/core/apply.ts): 토큰 JSON을 Figma Variables에 반영
+- [src/core/github.ts](./token-sync-plugin/src/core/github.ts): GitHub API 연동
+- [src/core/types.ts](./token-sync-plugin/src/core/types.ts): 공통 타입 정의
 
 ## 제한 사항
 
