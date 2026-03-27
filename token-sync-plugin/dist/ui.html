@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6fb;
+        --panel: #ffffff;
+        --border: #d7ddea;
+        --border-strong: #bcc6d8;
+        --text: #18212f;
+        --muted: #5f6b7c;
+        --primary: #1769ff;
+        --primary-hover: #0f57d6;
+        --secondary: #eef3ff;
+        --shadow: 0 10px 30px rgba(24, 33, 47, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 18px;
+        background:
+          radial-gradient(circle at top left, rgba(23, 105, 255, 0.12), transparent 38%),
+          linear-gradient(180deg, #f8faff 0%, var(--bg) 100%);
+        color: var(--text);
+        font: 13px/1.45 "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        padding: 16px;
+      }
+
+      .panel.is-preview-mode .config-view {
+        display: none;
+      }
+
+      .panel.is-preview-mode #preview-view {
+        display: block;
+        margin-top: 0;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 18px;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .panel-header-copy {
+        min-width: 0;
+      }
+
+      .panel-header-copy p {
+        margin-bottom: 0;
+      }
+
+      #toggle-preview {
+        flex-shrink: 0;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .fields {
+        display: grid;
+        gap: 10px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      input {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        color: var(--text);
+        padding: 10px 12px;
+        font: inherit;
+        transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+
+      input::placeholder {
+        color: #97a3b6;
+      }
+
+      input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(23, 105, 255, 0.14);
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 10px;
+        padding: 11px 12px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 120ms ease, background 120ms ease, opacity 120ms ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:active {
+        transform: translateY(0);
+      }
+
+      #push {
+        background: var(--primary);
+        color: #fff;
+      }
+
+      #push:hover {
+        background: var(--primary-hover);
+      }
+
+      #pull {
+        background: var(--secondary);
+        color: var(--primary);
+        border: 1px solid rgba(23, 105, 255, 0.14);
+      }
+
+      #log {
+        margin: 14px 0 0;
+        min-height: 90px;
+        max-height: 120px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #0f1724;
+        color: #d9e2f2;
+        padding: 12px;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        white-space: pre-wrap;
+      }
+
+      .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 14px;
+        margin-bottom: 8px;
+      }
+
+      .preview-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      #refresh-preview {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      #preview {
+        margin: 0;
+        min-height: 220px;
+        max-height: 280px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f7f9fd;
+        color: #223047;
+        padding: 12px;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        white-space: pre-wrap;
+      }
+
+      #preview-view {
+        display: none;
+      }
+
+      .panel.is-preview-mode #preview {
+        min-height: 620px;
+        max-height: 620px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel" id="panel">
+      <div class="panel-header">
+        <div class="panel-header-copy">
+          <h1>Token Sync</h1>
+          <p>Figma Variables를 GitHub의 <code>tokens.json</code>과 동기화합니다.</p>
+        </div>
+        <button id="toggle-preview" type="button">JSON</button>
+      </div>
+
+      <div class="config-view">
+        <!-- 최소 입력 UI만 두고 있으며, 검증과 저장 기능은 아직 없다. -->
+        <div class="fields">
+          <label>
+            GitHub Token
+            <input id="token" placeholder="ghp_xxxxxxxxxxxx" />
+          </label>
+          <label>
+            Repository
+            <input id="repo" placeholder="owner/repo" />
+          </label>
+          <label>
+            Branch
+            <input id="branch" placeholder="feature/design-tokens" />
+          </label>
+          <label>
+            Base Branch
+            <input id="base" placeholder="main" />
+          </label>
+          <label>
+            Token File Path
+            <input id="path" placeholder="tokens.json" value="tokens.json" />
+          </label>
+        </div>
+
+        <!-- push/pull 결과는 아래 로그 영역에 누적된다. -->
+        <div class="actions">
+          <button id="push">Push</button>
+          <button id="pull">Pull</button>
+        </div>
+
+        <pre id="log"></pre>
+      </div>
+
+      <div id="preview-view">
+        <div class="preview-header">
+          <h2 class="preview-title">Current tokens.json</h2>
+          <button id="refresh-preview" type="button">Refresh</button>
+        </div>
+        <pre id="preview">{}</pre>
+      </div>
+    </div>
+
+    <script>
+"use strict";
+(() => {
+  // src/ui.ts
+  function log(msg) {
+    const el = document.getElementById("log");
+    el.textContent += msg + "\n";
+  }
+  function requestPreview() {
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "PREVIEW"
+        }
+      },
+      "*"
+    );
+  }
+  function notifyUiReady() {
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "UI_READY"
+        }
+      },
+      "*"
+    );
+  }
+  function setPreview(content) {
+    const el = document.getElementById("preview");
+    el.textContent = content;
+  }
+  function togglePreviewMode() {
+    const panel = document.getElementById("panel");
+    const toggleButton = document.getElementById("toggle-preview");
+    const isPreviewMode = panel.classList.toggle("is-preview-mode");
+    toggleButton.textContent = isPreviewMode ? "Close" : "JSON";
+    if (isPreviewMode) {
+      requestPreview();
+    }
+  }
+  function getPluginMessage(data) {
+    if (!data || typeof data !== "object") {
+      return null;
+    }
+    const messageData = data;
+    if (messageData.pluginMessage && typeof messageData.pluginMessage === "object") {
+      return messageData.pluginMessage;
+    }
+    if (typeof messageData.type === "string") {
+      return messageData;
+    }
+    return null;
+  }
+  document.getElementById("push").onclick = () => {
+    const token = document.getElementById("token").value;
+    const repo = document.getElementById("repo").value;
+    const branch = document.getElementById("branch").value;
+    const base = document.getElementById("base").value;
+    const path = document.getElementById("path").value || "tokens.json";
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "PUSH",
+          token,
+          repo,
+          branch,
+          base,
+          path
+        }
+      },
+      "*"
+    );
+  };
+  document.getElementById("pull").onclick = () => {
+    const token = document.getElementById("token").value;
+    const repo = document.getElementById("repo").value;
+    const branch = document.getElementById("branch").value;
+    const path = document.getElementById("path").value || "tokens.json";
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "PULL",
+          token,
+          repo,
+          branch,
+          path
+        }
+      },
+      "*"
+    );
+  };
+  document.getElementById("refresh-preview").onclick = () => {
+    requestPreview();
+  };
+  document.getElementById("toggle-preview").onclick = () => {
+    togglePreviewMode();
+  };
+  function handlePluginMessage(event) {
+    var _a;
+    const msg = getPluginMessage(event.data);
+    if (!msg || !msg.type) {
+      return;
+    }
+    if (msg.type === "SUCCESS") {
+      log(msg.action === "pull" ? "Pull \uC644\uB8CC" : "Push \uC644\uB8CC");
+    }
+    if (msg.type === "PREVIEW_RESULT") {
+      setPreview((_a = msg.content) != null ? _a : "{}");
+    }
+    if (msg.type === "ERROR") {
+      log("\uC5D0\uB7EC: " + msg.error);
+    }
+  }
+  window.onmessage = handlePluginMessage;
+  window.addEventListener("message", handlePluginMessage);
+  self.onmessage = handlePluginMessage;
+  notifyUiReady();
+  requestPreview();
+})();
+//# sourceMappingURL=ui.js.map
+
+</script>
+  </body>
+</html>

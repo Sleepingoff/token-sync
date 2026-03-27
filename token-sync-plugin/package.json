@@ -1,0 +1,16 @@
+{
+  "name": "token-sync-plugin",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node build.js",
+    "watch": "node build.js --watch",
+    "build:tokens": "node scripts/build-style-dictionary.mjs"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.123.0",
+    "@tokens-studio/sd-transforms": "^1.2.11",
+    "esbuild": "^0.20.0",
+    "style-dictionary": "^5.0.4",
+    "typescript": "^5.0.0"
+  }
+}
