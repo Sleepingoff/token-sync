@@ -4,9 +4,24 @@ import {
   RawVariableToken,
   TokenDocument,
   TokenLeaf,
+  TokenSets,
   TokenTree,
   TokenValue,
 } from "./types";
+
+type TransformWarning = {
+  tokenName: string;
+  message: string;
+};
+
+type TransformOptions = {
+  strict?: boolean;
+};
+
+type TransformResult = {
+  document: TokenDocument;
+  warnings: TransformWarning[];
+};
 
 function rgbaToHex(color: RGB | RGBA) {
   // Figma RGB(0~1)를 일반적인 16진수 색상 문자열로 변환한다.
@@ -68,21 +83,56 @@ function isTokenLeaf(value: TokenTree | TokenLeaf | undefined): value is TokenLe
   );
 }
 
-function insertToken(tree: TokenTree, tokenName: string, leaf: TokenLeaf) {
+function summarizeGroupKeys(node: TokenTree) {
+  const keys = Object.keys(node);
+
+  if (keys.length === 0) {
+    return "비어 있는 그룹";
+  }
+
+  if (keys.length <= 4) {
+    return `하위 키: ${keys.join(", ")}`;
+  }
+
+  return `하위 키: ${keys.slice(0, 4).join(", ")} 외 ${keys.length - 4}개`;
+}
+
+function getPathCollisionMessage(
+  tokenName: string,
+  conflictPath: string,
+  reason: "leaf" | "branch",
+  existing?: TokenTree | TokenLeaf
+) {
+  if (reason === "leaf") {
+    return `토큰 경로 충돌: 추가하려는 "${tokenName}"이 기존 리프 토큰 "${conflictPath}"와 겹칩니다. "${conflictPath}"는 이미 값이 있는 토큰이라 하위 경로를 만들 수 없습니다.`;
+  }
+
+  const details =
+    existing && !isTokenLeaf(existing) ? ` (${summarizeGroupKeys(existing)})` : "";
+
+  return `토큰 경로 충돌: 추가하려는 "${tokenName}"이 기존 그룹 "${conflictPath}"와 겹칩니다.${details}`;
+}
+
+function insertToken(tree: TokenTree, tokenName: string, leaf: TokenLeaf): TransformWarning | null {
   const path = tokenName.split("/").filter(Boolean);
   let current: TokenTree = tree;
 
   path.forEach((key: string, i: number) => {
     const isLast = i === path.length - 1;
     const existing = current[key];
+    const currentPath = path.slice(0, i + 1).join("/");
 
     if (isLast) {
+      if (existing && !isTokenLeaf(existing)) {
+        throw new Error(getPathCollisionMessage(tokenName, currentPath, "branch", existing));
+      }
+
       current[key] = leaf;
       return;
     }
 
     if (isTokenLeaf(existing)) {
-      throw new Error(`토큰 경로 충돌: "${tokenName}"이 기존 리프 노드와 겹칩니다.`);
+      throw new Error(getPathCollisionMessage(tokenName, currentPath, "leaf", existing));
     }
 
     if (!existing) {
@@ -91,40 +141,121 @@ function insertToken(tree: TokenTree, tokenName: string, leaf: TokenLeaf) {
 
     current = current[key] as TokenTree;
   });
+
+  return null;
 }
 
-function insertStyleTokens(tree: TokenTree, styles: RawStyleToken[]) {
-  for (const style of styles) {
-    insertToken(tree, style.name, style.token);
+function tryInsertToken(
+  tree: TokenTree,
+  tokenName: string,
+  leaf: TokenLeaf,
+  warnings: TransformWarning[],
+  options?: TransformOptions
+) {
+  try {
+    insertToken(tree, tokenName, leaf);
+  } catch (error) {
+    if (options?.strict !== false) {
+      throw error;
+    }
+
+    warnings.push({
+      tokenName,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
-export function transformTokens(raw: RawVariableToken[], styles?: RawStyleTokens): TokenDocument {
-  const globalTree: TokenTree = {};
+function toStyleTokenPath(
+  category: keyof RawStyleTokens,
+  styleName: string
+) {
+  return `${category}/${styleName}`;
+}
+
+function getOrCreateTokenSet(tokenSets: TokenSets, name: string) {
+  if (!tokenSets[name]) {
+    tokenSets[name] = {};
+  }
+
+  return tokenSets[name];
+}
+
+function insertStyleTokens(
+  tree: TokenTree,
+  category: keyof RawStyleTokens,
+  styles: RawStyleToken[],
+  warnings: TransformWarning[],
+  options?: TransformOptions
+) {
+  for (const style of styles) {
+    tryInsertToken(
+      tree,
+      toStyleTokenPath(category, style.name),
+      style.token,
+      warnings,
+      options
+    );
+  }
+}
+
+export function transformTokensWithDiagnostics(
+  raw: RawVariableToken[],
+  styles?: RawStyleTokens,
+  options?: TransformOptions
+): TransformResult {
+  const tokenSets: TokenSets = {};
+  const warnings: TransformWarning[] = [];
 
   for (const token of raw) {
     const modeValues = getModeValues(token);
     const primaryMode = Object.keys(modeValues)[0];
+    const tree = getOrCreateTokenSet(tokenSets, token.collection || "global");
 
-    insertToken(globalTree, token.name, {
+    tryInsertToken(
+      tree,
+      token.name,
+      {
       type: mapVariableType(token.type),
       value: modeValues[primaryMode],
       description: token.description.trim() ? token.description : undefined,
-    });
+      reference: token.reference,
+      },
+      warnings,
+      options
+    );
   }
 
   if (styles) {
-    insertStyleTokens(globalTree, styles.paint);
-    insertStyleTokens(globalTree, styles.text);
-    insertStyleTokens(globalTree, styles.effect);
-    insertStyleTokens(globalTree, styles.grid);
+    const stylesTree = getOrCreateTokenSet(tokenSets, "styles");
+    insertStyleTokens(stylesTree, "paint", styles.paint, warnings, options);
+    insertStyleTokens(stylesTree, "text", styles.text, warnings, options);
+    insertStyleTokens(stylesTree, "effect", styles.effect, warnings, options);
+    insertStyleTokens(stylesTree, "grid", styles.grid, warnings, options);
   }
 
+  if (Object.keys(tokenSets).length === 0) {
+    tokenSets.global = {};
+  }
+
+  const tokenSetOrder = Object.keys(tokenSets);
+
   return {
-    global: globalTree,
-    $themes: [],
-    $metadata: {
-      tokenSetOrder: ["global"],
+    document: {
+      ...tokenSets,
+      $themes: [],
+      $metadata: {
+        tokenSetOrder,
+      },
     },
+    warnings,
   };
+}
+
+export function transformTokens(
+  raw: RawVariableToken[],
+  styles?: RawStyleTokens,
+  options?: TransformOptions
+): TokenDocument {
+  return transformTokensWithDiagnostics(raw, styles, options).document;
 }

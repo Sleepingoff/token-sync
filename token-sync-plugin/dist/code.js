@@ -1,6 +1,8 @@
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __propIsEnum = Object.prototype.propertyIsEnumerable;
@@ -16,6 +18,7 @@
       }
     return a;
   };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 
   // src/core/extract.ts
   function rgbChannelToHex(value) {
@@ -28,6 +31,9 @@
       return hex;
     }
     return `${hex}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`;
+  }
+  function isVariableAlias(value) {
+    return typeof value === "object" && value !== null && "type" in value && value.type === "VARIABLE_ALIAS";
   }
   function serializeOptionalColor(color) {
     return color ? rgbaToHex(color) : null;
@@ -63,20 +69,27 @@
       return "900";
     return style;
   }
+  function formatNumericValue(value, maxFractionDigits = 4) {
+    if (!Number.isFinite(value)) {
+      return `${value}`;
+    }
+    const rounded = Number(value.toFixed(maxFractionDigits));
+    return `${rounded}`;
+  }
   function formatLetterSpacing(letterSpacing) {
     if (letterSpacing.unit === "PERCENT") {
-      return `${letterSpacing.value}%`;
+      return `${formatNumericValue(letterSpacing.value)}%`;
     }
-    return `${letterSpacing.value}`;
+    return formatNumericValue(letterSpacing.value);
   }
   function formatLineHeight(lineHeight) {
     if (lineHeight.unit === "AUTO") {
       return "auto";
     }
     if (lineHeight.unit === "PERCENT") {
-      return `${lineHeight.value}%`;
+      return `${formatNumericValue(lineHeight.value)}%`;
     }
-    return `${lineHeight.value}`;
+    return formatNumericValue(lineHeight.value);
   }
   function serializePaint(paint) {
     if (paint.type === "SOLID") {
@@ -227,20 +240,63 @@
     const collections = figma.variables.getLocalVariableCollections();
     const variables = figma.variables.getLocalVariables();
     const collectionMap = new Map(collections.map((c) => [c.id, c]));
+    const variableMap = new Map(variables.map((variable) => [variable.id, variable]));
+    function getValueForModeName(variable, modeName) {
+      const collection = collectionMap.get(variable.variableCollectionId);
+      if (!collection) {
+        const firstValue = Object.values(variable.valuesByMode)[0];
+        if (firstValue === void 0) {
+          throw new Error(`\uBCC0\uC218 "${variable.name}"\uC758 \uAC12\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.`);
+        }
+        return firstValue;
+      }
+      const matchedMode = collection.modes.find((mode) => mode.name === modeName) || collection.modes[0];
+      if (!matchedMode) {
+        throw new Error(`\uBCC0\uC218 "${variable.name}"\uC758 mode\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.`);
+      }
+      return variable.valuesByMode[matchedMode.modeId];
+    }
+    function resolveVariableValue(variable, rawValue, modeName, visited = /* @__PURE__ */ new Set()) {
+      if (!isVariableAlias(rawValue)) {
+        return { value: rawValue };
+      }
+      if (visited.has(variable.id)) {
+        throw new Error(`\uBCC0\uC218 alias \uC21C\uD658 \uCC38\uC870\uAC00 \uAC10\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4: "${variable.name}"`);
+      }
+      const referenced = variableMap.get(rawValue.id);
+      if (!referenced) {
+        throw new Error(`\uBCC0\uC218 "${variable.name}"\uC774 \uCC38\uC870\uD558\uB294 alias \uB300\uC0C1\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.`);
+      }
+      const referencedCollection = collectionMap.get(referenced.variableCollectionId);
+      const nextRawValue = getValueForModeName(referenced, modeName);
+      const nextVisited = new Set(visited);
+      nextVisited.add(variable.id);
+      const resolved = resolveVariableValue(referenced, nextRawValue, modeName, nextVisited);
+      const referencePath = `${(referencedCollection == null ? void 0 : referencedCollection.name) || "global"}/${referenced.name}`;
+      return {
+        value: resolved.value,
+        reference: resolved.reference || referencePath
+      };
+    }
     return variables.map((v) => {
+      var _a;
       const collection = collectionMap.get(v.variableCollectionId);
       const modes = {};
       const collectionModes = collection ? collection.modes : [];
       for (const mode of collectionModes) {
         const value = v.valuesByMode[mode.modeId];
         if (value !== void 0) {
-          modes[mode.name] = value;
+          modes[mode.name] = resolveVariableValue(v, value, mode.name).value;
         }
       }
+      const primaryModeName = (_a = collectionModes[0]) == null ? void 0 : _a.name;
+      const primaryReference = primaryModeName && v.valuesByMode[collectionModes[0].modeId] !== void 0 ? resolveVariableValue(v, v.valuesByMode[collectionModes[0].modeId], primaryModeName).reference : void 0;
       return {
+        collection: (collection == null ? void 0 : collection.name) || "global",
         name: v.name,
         type: v.resolvedType,
         description: v.description,
+        reference: primaryReference,
         // transform 단계가 이 구조를 그대로 사용한다.
         modes
       };
@@ -271,7 +327,7 @@
           value: {
             fontFamily: style.fontName.family,
             fontWeight: toFontWeight(style.fontName.style),
-            fontSize: `${style.fontSize}`,
+            fontSize: formatNumericValue(style.fontSize),
             lineHeight: formatLineHeight(style.lineHeight),
             letterSpacing: formatLetterSpacing(style.letterSpacing)
           },
@@ -355,54 +411,123 @@
       value && typeof value === "object" && "type" in value && "value" in value
     );
   }
+  function summarizeGroupKeys(node) {
+    const keys = Object.keys(node);
+    if (keys.length === 0) {
+      return "\uBE44\uC5B4 \uC788\uB294 \uADF8\uB8F9";
+    }
+    if (keys.length <= 4) {
+      return `\uD558\uC704 \uD0A4: ${keys.join(", ")}`;
+    }
+    return `\uD558\uC704 \uD0A4: ${keys.slice(0, 4).join(", ")} \uC678 ${keys.length - 4}\uAC1C`;
+  }
+  function getPathCollisionMessage(tokenName, conflictPath, reason, existing) {
+    if (reason === "leaf") {
+      return `\uD1A0\uD070 \uACBD\uB85C \uCDA9\uB3CC: \uCD94\uAC00\uD558\uB824\uB294 "${tokenName}"\uC774 \uAE30\uC874 \uB9AC\uD504 \uD1A0\uD070 "${conflictPath}"\uC640 \uACB9\uCE69\uB2C8\uB2E4. "${conflictPath}"\uB294 \uC774\uBBF8 \uAC12\uC774 \uC788\uB294 \uD1A0\uD070\uC774\uB77C \uD558\uC704 \uACBD\uB85C\uB97C \uB9CC\uB4E4 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.`;
+    }
+    const details = existing && !isTokenLeaf(existing) ? ` (${summarizeGroupKeys(existing)})` : "";
+    return `\uD1A0\uD070 \uACBD\uB85C \uCDA9\uB3CC: \uCD94\uAC00\uD558\uB824\uB294 "${tokenName}"\uC774 \uAE30\uC874 \uADF8\uB8F9 "${conflictPath}"\uC640 \uACB9\uCE69\uB2C8\uB2E4.${details}`;
+  }
   function insertToken(tree, tokenName, leaf) {
     const path = tokenName.split("/").filter(Boolean);
     let current = tree;
     path.forEach((key, i) => {
       const isLast = i === path.length - 1;
       const existing = current[key];
+      const currentPath = path.slice(0, i + 1).join("/");
       if (isLast) {
+        if (existing && !isTokenLeaf(existing)) {
+          throw new Error(getPathCollisionMessage(tokenName, currentPath, "branch", existing));
+        }
         current[key] = leaf;
         return;
       }
       if (isTokenLeaf(existing)) {
-        throw new Error(`\uD1A0\uD070 \uACBD\uB85C \uCDA9\uB3CC: "${tokenName}"\uC774 \uAE30\uC874 \uB9AC\uD504 \uB178\uB4DC\uC640 \uACB9\uCE69\uB2C8\uB2E4.`);
+        throw new Error(getPathCollisionMessage(tokenName, currentPath, "leaf", existing));
       }
       if (!existing) {
         current[key] = {};
       }
       current = current[key];
     });
+    return null;
   }
-  function insertStyleTokens(tree, styles) {
-    for (const style of styles) {
-      insertToken(tree, style.name, style.token);
+  function tryInsertToken(tree, tokenName, leaf, warnings, options) {
+    try {
+      insertToken(tree, tokenName, leaf);
+    } catch (error) {
+      if ((options == null ? void 0 : options.strict) !== false) {
+        throw error;
+      }
+      warnings.push({
+        tokenName,
+        message: error instanceof Error ? error.message : String(error)
+      });
     }
   }
-  function transformTokens(raw, styles) {
-    const globalTree = {};
+  function toStyleTokenPath(category, styleName) {
+    return `${category}/${styleName}`;
+  }
+  function getOrCreateTokenSet(tokenSets, name) {
+    if (!tokenSets[name]) {
+      tokenSets[name] = {};
+    }
+    return tokenSets[name];
+  }
+  function insertStyleTokens(tree, category, styles, warnings, options) {
+    for (const style of styles) {
+      tryInsertToken(
+        tree,
+        toStyleTokenPath(category, style.name),
+        style.token,
+        warnings,
+        options
+      );
+    }
+  }
+  function transformTokensWithDiagnostics(raw, styles, options) {
+    const tokenSets = {};
+    const warnings = [];
     for (const token of raw) {
       const modeValues = getModeValues(token);
       const primaryMode = Object.keys(modeValues)[0];
-      insertToken(globalTree, token.name, {
-        type: mapVariableType(token.type),
-        value: modeValues[primaryMode],
-        description: token.description.trim() ? token.description : void 0
-      });
+      const tree = getOrCreateTokenSet(tokenSets, token.collection || "global");
+      tryInsertToken(
+        tree,
+        token.name,
+        {
+          type: mapVariableType(token.type),
+          value: modeValues[primaryMode],
+          description: token.description.trim() ? token.description : void 0,
+          reference: token.reference
+        },
+        warnings,
+        options
+      );
     }
     if (styles) {
-      insertStyleTokens(globalTree, styles.paint);
-      insertStyleTokens(globalTree, styles.text);
-      insertStyleTokens(globalTree, styles.effect);
-      insertStyleTokens(globalTree, styles.grid);
+      const stylesTree = getOrCreateTokenSet(tokenSets, "styles");
+      insertStyleTokens(stylesTree, "paint", styles.paint, warnings, options);
+      insertStyleTokens(stylesTree, "text", styles.text, warnings, options);
+      insertStyleTokens(stylesTree, "effect", styles.effect, warnings, options);
+      insertStyleTokens(stylesTree, "grid", styles.grid, warnings, options);
     }
+    if (Object.keys(tokenSets).length === 0) {
+      tokenSets.global = {};
+    }
+    const tokenSetOrder = Object.keys(tokenSets);
     return {
-      global: globalTree,
-      $themes: [],
-      $metadata: {
-        tokenSetOrder: ["global"]
-      }
+      document: __spreadProps(__spreadValues({}, tokenSets), {
+        $themes: [],
+        $metadata: {
+          tokenSetOrder
+        }
+      }),
+      warnings
     };
+  }
+  function transformTokens(raw, styles, options) {
+    return transformTokensWithDiagnostics(raw, styles, options).document;
   }
 
   // src/core/github.ts
@@ -793,12 +918,23 @@
   function isVariableTokenLeaf(node) {
     return node.type === "color" && typeof node.value === "string" || node.type === "number" && typeof node.value === "number" || node.type === "string" && typeof node.value === "string" || node.type === "boolean" && typeof node.value === "boolean";
   }
-  function getTokenTree(tokens) {
+  function getTokenSets(tokens) {
     const tokenDocument = tokens;
-    if (tokenDocument.global && tokenDocument.$metadata) {
-      return tokenDocument.global;
+    if (tokenDocument.$metadata) {
+      const sets = {};
+      for (const [key, value] of Object.entries(tokenDocument)) {
+        if (key.startsWith("$")) {
+          continue;
+        }
+        sets[key] = value;
+      }
+      if (Object.keys(sets).length > 0) {
+        return sets;
+      }
     }
-    return tokens;
+    return {
+      global: tokens
+    };
   }
   function hexToRgb(value) {
     const normalized = value.replace("#", "");
@@ -840,39 +976,48 @@
       return "BOOLEAN";
     return null;
   }
-  function applyTokenNode(tokens, localVariables, parentPath = "") {
+  function getOrCreateCollection(collectionName) {
+    const collections = figma.variables.getLocalVariableCollections();
+    const existing = collections.find((collection) => collection.name === collectionName);
+    if (existing) {
+      return existing;
+    }
+    return figma.variables.createVariableCollection(collectionName);
+  }
+  function applyTokenNode(tokens, localVariables, collection, parentPath = "") {
     for (const [key, node] of Object.entries(tokens)) {
       const name = parentPath ? `${parentPath}/${key}` : key;
       if (isTokenLeaf2(node)) {
         if (!isVariableTokenLeaf(node)) {
           continue;
         }
-        let variable = localVariables.find((v) => v.name === name);
+        let variable = localVariables.find(
+          (v) => v.name === name && v.variableCollectionId === collection.id
+        );
         const variableType = toVariableResolvedType(node.type);
         if (!variableType) {
           continue;
         }
         if (!variable) {
-          const collection = figma.variables.getLocalVariableCollections()[0];
-          if (!collection) {
-            throw new Error("\uC801\uC6A9\uD560 \uB85C\uCEEC \uBCC0\uC218 \uCEEC\uB809\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.");
-          }
           variable = figma.variables.createVariable(name, collection.id, variableType);
           localVariables.push(variable);
         }
         applyLeafToVariable(variable, node);
         continue;
       }
-      applyTokenNode(node, localVariables, name);
+      applyTokenNode(node, localVariables, collection, name);
     }
   }
   async function applyTokens(tokens) {
-    const collection = figma.variables.getLocalVariableCollections()[0];
-    if (!collection) {
-      throw new Error("\uC801\uC6A9\uD560 \uB85C\uCEEC \uBCC0\uC218 \uCEEC\uB809\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.");
-    }
     const localVariables = figma.variables.getLocalVariables();
-    applyTokenNode(getTokenTree(tokens), localVariables);
+    const tokenSets = getTokenSets(tokens);
+    for (const [collectionName, tokenTree] of Object.entries(tokenSets)) {
+      if (collectionName === "styles") {
+        continue;
+      }
+      const collection = getOrCreateCollection(collectionName);
+      applyTokenNode(tokenTree, localVariables, collection);
+    }
   }
 
   // src/code.ts
@@ -932,12 +1077,27 @@
     }
     return transformTokens(raw, styles);
   }
-  function getPreviewTokens() {
-    return getCurrentTokens();
+  function getPreviewContent() {
+    const raw = extractVariables();
+    const styles = extractStyleTokens();
+    if (raw.length === 0 && styles.paint.length === 0 && styles.text.length === 0 && styles.effect.length === 0 && styles.grid.length === 0) {
+      return toPreviewContent(emptyTokenDocument());
+    }
+    const result = transformTokensWithDiagnostics(raw, styles, { strict: false });
+    const content = toPreviewContent(result.document);
+    if (result.warnings.length === 0) {
+      return content;
+    }
+    const warnings = result.warnings.map((warning) => `- ${warning.message}`).join("\n");
+    return `${content}
+
+/* Skipped conflicting tokens:
+${warnings}
+*/`;
   }
   function syncPreviewToUI() {
     try {
-      postPreviewContent(toPreviewContent(getPreviewTokens()));
+      postPreviewContent(getPreviewContent());
     } catch (error) {
       postPreviewError(error);
     }

@@ -13,14 +13,28 @@ function isVariableTokenLeaf(node: TokenLeaf) {
   );
 }
 
-function getTokenTree(tokens: TokenTree | TokenDocument) {
+function getTokenSets(tokens: TokenTree | TokenDocument) {
   const tokenDocument = tokens as TokenDocument;
 
-  if (tokenDocument.global && tokenDocument.$metadata) {
-    return tokenDocument.global;
+  if (tokenDocument.$metadata) {
+    const sets: Record<string, TokenTree> = {};
+
+    for (const [key, value] of Object.entries(tokenDocument)) {
+      if (key.startsWith("$")) {
+        continue;
+      }
+
+      sets[key] = value as TokenTree;
+    }
+
+    if (Object.keys(sets).length > 0) {
+      return sets;
+    }
   }
 
-  return tokens as TokenTree;
+  return {
+    global: tokens as TokenTree,
+  };
 }
 
 function hexToRgb(value: string): RGB {
@@ -72,9 +86,21 @@ function toVariableResolvedType(type: TokenLeaf["type"]): VariableResolvedDataTy
   return null;
 }
 
+function getOrCreateCollection(collectionName: string) {
+  const collections = figma.variables.getLocalVariableCollections();
+  const existing = collections.find((collection) => collection.name === collectionName);
+
+  if (existing) {
+    return existing;
+  }
+
+  return figma.variables.createVariableCollection(collectionName);
+}
+
 function applyTokenNode(
   tokens: TokenTree,
   localVariables: Variable[],
+  collection: VariableCollection,
   parentPath = ""
 ) {
   for (const [key, node] of Object.entries(tokens)) {
@@ -86,7 +112,9 @@ function applyTokenNode(
       }
 
       // 같은 이름의 로컬 변수가 있으면 재사용하고, 없으면 새로 만든다.
-      let variable = localVariables.find((v) => v.name === name);
+      let variable = localVariables.find(
+        (v) => v.name === name && v.variableCollectionId === collection.id
+      );
       const variableType = toVariableResolvedType(node.type);
 
       if (!variableType) {
@@ -94,12 +122,6 @@ function applyTokenNode(
       }
 
       if (!variable) {
-        const collection = figma.variables.getLocalVariableCollections()[0];
-
-        if (!collection) {
-          throw new Error("적용할 로컬 변수 컬렉션이 없습니다.");
-        }
-
         variable = figma.variables.createVariable(name, collection.id, variableType);
         localVariables.push(variable);
       }
@@ -108,19 +130,21 @@ function applyTokenNode(
       continue;
     }
 
-    applyTokenNode(node as TokenTree, localVariables, name);
+    applyTokenNode(node as TokenTree, localVariables, collection, name);
   }
 }
 
 export async function applyTokens(tokens: TokenTree | TokenDocument) {
-  const collection = figma.variables.getLocalVariableCollections()[0];
-
-  if (!collection) {
-    throw new Error("적용할 로컬 변수 컬렉션이 없습니다.");
-  }
-
   const localVariables = figma.variables.getLocalVariables();
+  const tokenSets = getTokenSets(tokens);
 
-  // 중첩 depth와 무관하게 토큰 트리를 순회하면서 변수를 적용한다.
-  applyTokenNode(getTokenTree(tokens), localVariables);
+  for (const [collectionName, tokenTree] of Object.entries(tokenSets)) {
+    if (collectionName === "styles") {
+      continue;
+    }
+
+    const collection = getOrCreateCollection(collectionName);
+    // 중첩 depth와 무관하게 토큰 트리를 순회하면서 변수를 적용한다.
+    applyTokenNode(tokenTree, localVariables, collection);
+  }
 }

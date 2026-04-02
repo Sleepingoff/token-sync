@@ -19,6 +19,10 @@ function rgbaToHex(color: RGB | RGBA, opacity?: number) {
     .padStart(2, "0")}`;
 }
 
+function isVariableAlias(value: VariableValue): value is VariableAlias {
+  return typeof value === "object" && value !== null && "type" in value && value.type === "VARIABLE_ALIAS";
+}
+
 function serializeOptionalColor(color?: RGB | RGBA) {
   return color ? rgbaToHex(color) : null;
 }
@@ -50,12 +54,21 @@ function toFontWeight(style: string) {
   return style;
 }
 
-function formatLetterSpacing(letterSpacing: LetterSpacing) {
-  if (letterSpacing.unit === "PERCENT") {
-    return `${letterSpacing.value}%`;
+function formatNumericValue(value: number, maxFractionDigits = 4) {
+  if (!Number.isFinite(value)) {
+    return `${value}`;
   }
 
-  return `${letterSpacing.value}`;
+  const rounded = Number(value.toFixed(maxFractionDigits));
+  return `${rounded}`;
+}
+
+function formatLetterSpacing(letterSpacing: LetterSpacing) {
+  if (letterSpacing.unit === "PERCENT") {
+    return `${formatNumericValue(letterSpacing.value)}%`;
+  }
+
+  return formatNumericValue(letterSpacing.value);
 }
 
 function formatLineHeight(lineHeight: LineHeight) {
@@ -64,10 +77,10 @@ function formatLineHeight(lineHeight: LineHeight) {
   }
 
   if (lineHeight.unit === "PERCENT") {
-    return `${lineHeight.value}%`;
+    return `${formatNumericValue(lineHeight.value)}%`;
   }
 
-  return `${lineHeight.value}`;
+  return formatNumericValue(lineHeight.value);
 }
 
 function serializePaint(paint: Paint) {
@@ -247,6 +260,63 @@ export function extractVariables(): RawVariableToken[] {
   const variables = figma.variables.getLocalVariables();
 
   const collectionMap = new Map(collections.map((c) => [c.id, c]));
+  const variableMap = new Map(variables.map((variable) => [variable.id, variable]));
+
+  function getValueForModeName(variable: Variable, modeName: string) {
+    const collection = collectionMap.get(variable.variableCollectionId);
+
+    if (!collection) {
+      const firstValue = Object.values(variable.valuesByMode)[0];
+      if (firstValue === undefined) {
+        throw new Error(`변수 "${variable.name}"의 값을 찾을 수 없습니다.`);
+      }
+
+      return firstValue;
+    }
+
+    const matchedMode =
+      collection.modes.find((mode) => mode.name === modeName) ||
+      collection.modes[0];
+
+    if (!matchedMode) {
+      throw new Error(`변수 "${variable.name}"의 mode를 찾을 수 없습니다.`);
+    }
+
+    return variable.valuesByMode[matchedMode.modeId];
+  }
+
+  function resolveVariableValue(
+    variable: Variable,
+    rawValue: VariableValue,
+    modeName: string,
+    visited = new Set<string>()
+  ): { value: VariableValue; reference?: string } {
+    if (!isVariableAlias(rawValue)) {
+      return { value: rawValue };
+    }
+
+    if (visited.has(variable.id)) {
+      throw new Error(`변수 alias 순환 참조가 감지되었습니다: "${variable.name}"`);
+    }
+
+    const referenced = variableMap.get(rawValue.id);
+
+    if (!referenced) {
+      throw new Error(`변수 "${variable.name}"이 참조하는 alias 대상을 찾을 수 없습니다.`);
+    }
+
+    const referencedCollection = collectionMap.get(referenced.variableCollectionId);
+    const nextRawValue = getValueForModeName(referenced, modeName);
+    const nextVisited = new Set(visited);
+    nextVisited.add(variable.id);
+    const resolved = resolveVariableValue(referenced, nextRawValue, modeName, nextVisited);
+    const referencePath = `${referencedCollection?.name || "global"}/${referenced.name}`;
+
+    return {
+      value: resolved.value,
+      reference: resolved.reference || referencePath,
+    };
+  }
 
   return variables.map((v) => {
     const collection = collectionMap.get(v.variableCollectionId);
@@ -259,14 +329,22 @@ export function extractVariables(): RawVariableToken[] {
     for (const mode of collectionModes) {
       const value = v.valuesByMode[mode.modeId];
       if (value !== undefined) {
-        modes[mode.name] = value;
+        modes[mode.name] = resolveVariableValue(v, value, mode.name).value;
       }
     }
 
+    const primaryModeName = collectionModes[0]?.name;
+    const primaryReference =
+      primaryModeName && v.valuesByMode[collectionModes[0].modeId] !== undefined
+        ? resolveVariableValue(v, v.valuesByMode[collectionModes[0].modeId], primaryModeName).reference
+        : undefined;
+
     return {
+      collection: collection?.name || "global",
       name: v.name,
       type: v.resolvedType,
       description: v.description,
+      reference: primaryReference,
       // transform 단계가 이 구조를 그대로 사용한다.
       modes,
     };
@@ -302,7 +380,7 @@ export function extractStyleTokens(): RawStyleTokens {
         value: {
           fontFamily: style.fontName.family,
           fontWeight: toFontWeight(style.fontName.style),
-          fontSize: `${style.fontSize}`,
+          fontSize: formatNumericValue(style.fontSize),
           lineHeight: formatLineHeight(style.lineHeight),
           letterSpacing: formatLetterSpacing(style.letterSpacing),
         },

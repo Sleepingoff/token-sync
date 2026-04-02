@@ -10,14 +10,18 @@ export type TokenLeaf = {
   type: string;
   value: TokenValue;
   description?: string;
+  reference?: string;
 };
 
 export type TokenTree = {
   [key: string]: TokenTree | TokenLeaf;
 };
 
-export type TokenDocument = {
-  global: TokenTree;
+export type TokenSets = {
+  [key: string]: TokenTree;
+};
+
+export type TokenDocument = TokenSets & {
   $themes: unknown[];
   $metadata: {
     tokenSetOrder: string[];
@@ -25,10 +29,12 @@ export type TokenDocument = {
 };
 
 export type RawVariableToken = {
+  collection: string;
   name: string;
   type: VariableResolvedDataType;
   modes: Record<string, VariableValue>;
   description: string;
+  reference?: string;
 };
 
 export type RawStyleToken = {

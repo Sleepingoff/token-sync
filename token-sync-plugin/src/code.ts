@@ -1,5 +1,5 @@
 import { extractStyleTokens, extractVariables } from "./core/extract";
-import { transformTokens } from "./core/transform";
+import { transformTokens, transformTokensWithDiagnostics } from "./core/transform";
 import { pushToGitHub, pullFromGitHub } from "./core/github";
 import { applyTokens } from "./core/apply";
 import { PersistedSettings, PluginMessage, TokenDocument } from "./core/types";
@@ -83,13 +83,34 @@ function getCurrentTokens(): TokenDocument {
   return transformTokens(raw, styles);
 }
 
-function getPreviewTokens() {
-  return getCurrentTokens();
+function getPreviewContent() {
+  const raw = extractVariables();
+  const styles = extractStyleTokens();
+
+  if (
+    raw.length === 0 &&
+    styles.paint.length === 0 &&
+    styles.text.length === 0 &&
+    styles.effect.length === 0 &&
+    styles.grid.length === 0
+  ) {
+    return toPreviewContent(emptyTokenDocument());
+  }
+
+  const result = transformTokensWithDiagnostics(raw, styles, { strict: false });
+  const content = toPreviewContent(result.document);
+
+  if (result.warnings.length === 0) {
+    return content;
+  }
+
+  const warnings = result.warnings.map((warning) => `- ${warning.message}`).join("\n");
+  return `${content}\n\n/* Skipped conflicting tokens:\n${warnings}\n*/`;
 }
 
 function syncPreviewToUI() {
   try {
-    postPreviewContent(toPreviewContent(getPreviewTokens()));
+    postPreviewContent(getPreviewContent());
   } catch (error) {
     postPreviewError(error);
   }
