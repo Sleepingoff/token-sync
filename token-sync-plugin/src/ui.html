@@ -42,6 +42,22 @@
         display: none;
       }
 
+      .panel.is-dev-mode .design-view {
+        display: none;
+      }
+
+      .panel.is-design-mode .dev-view {
+        display: none;
+      }
+
+      .panel.is-dev-mode #toggle-preview {
+        display: none;
+      }
+
+      .panel.is-dev-mode #resize-handle {
+        display: none;
+      }
+
       .panel.is-preview-mode #preview-view {
         display: block;
         margin-top: 0;
@@ -73,6 +89,17 @@
 
       .panel-header-copy p {
         margin-bottom: 0;
+      }
+
+      .mode-badge {
+        display: inline-flex;
+        margin-top: 8px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #eef3ff;
+        color: var(--primary);
+        font-size: 11px;
+        font-weight: 700;
       }
 
       #toggle-preview {
@@ -175,6 +202,114 @@
         white-space: pre-wrap;
       }
 
+      .selection-panel {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f7f9fd;
+        padding: 12px;
+      }
+
+      .selection-title {
+        margin: 0 0 8px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      #selection-colors {
+        display: grid;
+        gap: 12px;
+      }
+
+      .selection-empty {
+        color: #5f6b7c;
+        font-size: 12px;
+      }
+
+      .selection-color-group {
+        display: grid;
+        gap: 8px;
+      }
+
+      .selection-color-group-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .selection-color-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .selection-color-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 10px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .selection-color-token {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .selection-color-collection {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .selection-color-value {
+        font: 12px/1.4 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        color: #223047;
+      }
+
+      .selection-subpanel {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+
+      .selection-subheader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .selection-subtitle {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      #copy-selection-text {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      #copy-selection-text:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      #selection-text-content {
+        margin: 0;
+        color: #223047;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
       .preview-header {
         display: flex;
         align-items: center;
@@ -220,19 +355,39 @@
         min-height: 620px;
         max-height: 620px;
       }
+
+      #resize-handle {
+        position: fixed;
+        right: 14px;
+        bottom: 12px;
+        z-index: 20;
+        padding: 6px 8px;
+        border: 0;
+        background: transparent;
+        color: #7f8aa0;
+        font: 700 14px/1 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        letter-spacing: -0.08em;
+        cursor: nwse-resize;
+        user-select: none;
+      }
+
+      #resize-handle:hover {
+        color: var(--primary);
+      }
     </style>
   </head>
   <body>
-    <div class="panel" id="panel">
+    <div class="panel is-design-mode" id="panel">
       <div class="panel-header">
         <div class="panel-header-copy">
           <h1>Token Sync</h1>
           <p>Figma Variables를 GitHub의 <code>tokens.json</code>과 동기화합니다.</p>
+          <div class="mode-badge" id="mode-badge">Design Mode</div>
         </div>
         <button id="toggle-preview" type="button">JSON</button>
       </div>
 
-      <div class="config-view">
+      <div class="design-view config-view">
         <!-- 최소 입력 UI만 두고 있으며, 검증과 저장 기능은 아직 없다. -->
         <div class="fields">
           <label>
@@ -270,6 +425,20 @@
         <pre id="log"></pre>
       </div>
 
+      <div class="dev-view">
+        <div class="selection-panel">
+          <h2 class="selection-title" id="selection-title">Selected layer: 선택 없음</h2>
+          <pre id="selection-colors">바인딩된 컬러 변수를 찾지 못했습니다.</pre>
+          <div class="selection-subpanel" id="selection-text-panel" hidden>
+            <div class="selection-subheader">
+              <h3 class="selection-subtitle">Selected text</h3>
+              <button id="copy-selection-text" type="button" disabled>Copy Text</button>
+            </div>
+            <pre id="selection-text-content"></pre>
+          </div>
+        </div>
+      </div>
+
       <div id="preview-view">
         <div class="preview-header">
           <h2 class="preview-title">Current tokens.json</h2>
@@ -277,6 +446,8 @@
         </div>
         <pre id="preview">{}</pre>
       </div>
+
+      <button id="resize-handle" type="button" aria-label="Resize window">//</button>
     </div>
 
     <script src="ui.js"></script>

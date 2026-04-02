@@ -88,9 +88,17 @@ export type UiReadyMessage = {
   type: "UI_READY";
 };
 
+export type ResizeUiMessage = {
+  type: "RESIZE_UI";
+  width: number;
+  height: number;
+  manual?: boolean;
+};
+
 export type PluginMessage =
   | PushMessage
   | PullMessage
   | SaveSettingsMessage
   | PreviewMessage
-  | UiReadyMessage;
+  | UiReadyMessage
+  | ResizeUiMessage;

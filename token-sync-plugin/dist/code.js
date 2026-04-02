@@ -236,9 +236,9 @@
       count: grid.count
     };
   }
-  function extractVariables() {
-    const collections = figma.variables.getLocalVariableCollections();
-    const variables = figma.variables.getLocalVariables();
+  async function extractVariables() {
+    const collections = await figma.variables.getLocalVariableCollectionsAsync();
+    const variables = await figma.variables.getLocalVariablesAsync();
     const collectionMap = new Map(collections.map((c) => [c.id, c]));
     const variableMap = new Map(variables.map((variable) => [variable.id, variable]));
     function getValueForModeName(variable, modeName) {
@@ -256,9 +256,9 @@
       }
       return variable.valuesByMode[matchedMode.modeId];
     }
-    function resolveVariableValue(variable, rawValue, modeName, visited = /* @__PURE__ */ new Set()) {
+    function resolveVariableValue2(variable, rawValue, modeName, visited = /* @__PURE__ */ new Set()) {
       if (!isVariableAlias(rawValue)) {
-        return { value: rawValue };
+        return Promise.resolve({ value: rawValue });
       }
       if (visited.has(variable.id)) {
         throw new Error(`\uBCC0\uC218 alias \uC21C\uD658 \uCC38\uC870\uAC00 \uAC10\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4: "${variable.name}"`);
@@ -271,14 +271,15 @@
       const nextRawValue = getValueForModeName(referenced, modeName);
       const nextVisited = new Set(visited);
       nextVisited.add(variable.id);
-      const resolved = resolveVariableValue(referenced, nextRawValue, modeName, nextVisited);
-      const referencePath = `${(referencedCollection == null ? void 0 : referencedCollection.name) || "global"}/${referenced.name}`;
-      return {
-        value: resolved.value,
-        reference: resolved.reference || referencePath
-      };
+      return resolveVariableValue2(referenced, nextRawValue, modeName, nextVisited).then((resolved) => {
+        const referencePath = `${(referencedCollection == null ? void 0 : referencedCollection.name) || "global"}/${referenced.name}`;
+        return {
+          value: resolved.value,
+          reference: resolved.reference || referencePath
+        };
+      });
     }
-    return variables.map((v) => {
+    return Promise.all(variables.map(async (v) => {
       var _a;
       const collection = collectionMap.get(v.variableCollectionId);
       const modes = {};
@@ -286,11 +287,11 @@
       for (const mode of collectionModes) {
         const value = v.valuesByMode[mode.modeId];
         if (value !== void 0) {
-          modes[mode.name] = resolveVariableValue(v, value, mode.name).value;
+          modes[mode.name] = (await resolveVariableValue2(v, value, mode.name)).value;
         }
       }
       const primaryModeName = (_a = collectionModes[0]) == null ? void 0 : _a.name;
-      const primaryReference = primaryModeName && v.valuesByMode[collectionModes[0].modeId] !== void 0 ? resolveVariableValue(v, v.valuesByMode[collectionModes[0].modeId], primaryModeName).reference : void 0;
+      const primaryReference = primaryModeName && v.valuesByMode[collectionModes[0].modeId] !== void 0 ? (await resolveVariableValue2(v, v.valuesByMode[collectionModes[0].modeId], primaryModeName)).reference : void 0;
       return {
         collection: (collection == null ? void 0 : collection.name) || "global",
         name: v.name,
@@ -300,11 +301,17 @@
         // transform 단계가 이 구조를 그대로 사용한다.
         modes
       };
-    });
+    }));
   }
-  function extractStyleTokens() {
+  async function extractStyleTokens() {
+    const [paintStyles, textStyles, effectStyles, gridStyles] = await Promise.all([
+      figma.getLocalPaintStylesAsync(),
+      figma.getLocalTextStylesAsync(),
+      figma.getLocalEffectStylesAsync(),
+      figma.getLocalGridStylesAsync()
+    ]);
     return {
-      paint: figma.getLocalPaintStyles().map((style) => {
+      paint: paintStyles.map((style) => {
         const solidPaint = style.paints.length === 1 && style.paints[0].type === "SOLID" ? style.paints[0] : null;
         if (solidPaint) {
           return compactToken(style.name, {
@@ -321,7 +328,7 @@
           description: toDescription(style.description)
         });
       }),
-      text: figma.getLocalTextStyles().map(
+      text: textStyles.map(
         (style) => compactToken(style.name, {
           type: "typography",
           value: {
@@ -334,7 +341,7 @@
           description: toDescription(style.description)
         })
       ),
-      effect: figma.getLocalEffectStyles().map((style) => {
+      effect: effectStyles.map((style) => {
         const shadowEffect = style.effects.length === 1 && (style.effects[0].type === "DROP_SHADOW" || style.effects[0].type === "INNER_SHADOW") ? style.effects[0] : null;
         if (shadowEffect) {
           return compactToken(style.name, {
@@ -358,7 +365,7 @@
           description: toDescription(style.description)
         });
       }),
-      grid: figma.getLocalGridStyles().map(
+      grid: gridStyles.map(
         (style) => compactToken(style.name, {
           type: "grid",
           value: {
@@ -1021,7 +1028,10 @@
   }
 
   // src/code.ts
-  figma.showUI(__html__, { width: 420, height: 720 });
+  figma.showUI(__html__, {
+    width: figma.editorType === "dev" ? 460 : 420,
+    height: figma.editorType === "dev" ? 1600 : 720
+  });
   var SETTINGS_KEY = "token-sync-settings";
   function formatError(error) {
     if (error instanceof Error) {
@@ -1033,6 +1043,18 @@
     figma.ui.postMessage({
       type: "PREVIEW_RESULT",
       content
+    });
+  }
+  function postSelectionColorInfo(payload) {
+    figma.ui.postMessage(__spreadValues({
+      type: "SELECTION_COLOR_INFO"
+    }, payload));
+  }
+  function postUiMode() {
+    figma.ui.postMessage({
+      type: "UI_MODE",
+      editorType: figma.editorType,
+      mode: figma.mode
     });
   }
   function postPreviewError(error) {
@@ -1069,17 +1091,17 @@
       }
     };
   }
-  function getCurrentTokens() {
-    const raw = extractVariables();
-    const styles = extractStyleTokens();
+  async function getCurrentTokens() {
+    const raw = await extractVariables();
+    const styles = await extractStyleTokens();
     if (raw.length === 0 && styles.paint.length === 0 && styles.text.length === 0 && styles.effect.length === 0 && styles.grid.length === 0) {
       return emptyTokenDocument();
     }
     return transformTokens(raw, styles);
   }
-  function getPreviewContent() {
-    const raw = extractVariables();
-    const styles = extractStyleTokens();
+  async function getPreviewContent() {
+    const raw = await extractVariables();
+    const styles = await extractStyleTokens();
     if (raw.length === 0 && styles.paint.length === 0 && styles.text.length === 0 && styles.effect.length === 0 && styles.grid.length === 0) {
       return toPreviewContent(emptyTokenDocument());
     }
@@ -1095,32 +1117,163 @@
 ${warnings}
 */`;
   }
-  function syncPreviewToUI() {
+  async function syncPreviewToUI() {
     try {
-      postPreviewContent(getPreviewContent());
+      postPreviewContent(await getPreviewContent());
     } catch (error) {
       postPreviewError(error);
     }
   }
-  syncPreviewToUI();
-  figma.on("documentchange", () => {
-    syncPreviewToUI();
-  });
-  figma.on("stylechange", () => {
-    syncPreviewToUI();
-  });
+  function rgbChannelToHex2(value) {
+    return Math.round(value * 255).toString(16).padStart(2, "0");
+  }
+  function rgbaToHex3(color) {
+    const alpha = "a" in color ? color.a : 1;
+    const hex = `#${rgbChannelToHex2(color.r)}${rgbChannelToHex2(color.g)}${rgbChannelToHex2(color.b)}`;
+    if (alpha >= 1) {
+      return hex;
+    }
+    return `${hex}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`;
+  }
+  function isVariableAlias2(value) {
+    return Boolean(value && typeof value === "object" && "type" in value && value.type === "VARIABLE_ALIAS");
+  }
+  async function resolveVariableValue(variable, resolvedModes, visited = /* @__PURE__ */ new Set()) {
+    const fallbackModeId = Object.keys(variable.valuesByMode)[0];
+    const currentModeId = resolvedModes[variable.variableCollectionId] || fallbackModeId;
+    const rawValue = variable.valuesByMode[currentModeId];
+    if (rawValue === void 0) {
+      throw new Error(`\uBCC0\uC218 "${variable.name}"\uC758 \uAC12\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.`);
+    }
+    if (!isVariableAlias2(rawValue)) {
+      return rawValue;
+    }
+    if (visited.has(variable.id)) {
+      throw new Error(`\uBCC0\uC218 alias \uC21C\uD658 \uCC38\uC870\uAC00 \uAC10\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4: "${variable.name}"`);
+    }
+    const referenced = await figma.variables.getVariableByIdAsync(rawValue.id);
+    if (!referenced) {
+      throw new Error(`\uBCC0\uC218 "${variable.name}"\uC774 \uCC38\uC870\uD558\uB294 alias \uB300\uC0C1\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.`);
+    }
+    const nextVisited = new Set(visited);
+    nextVisited.add(variable.id);
+    return resolveVariableValue(referenced, resolvedModes, nextVisited);
+  }
+  async function formatVariableValue(variable, resolvedModes) {
+    const resolved = await resolveVariableValue(variable, resolvedModes);
+    if (variable.resolvedType === "COLOR") {
+      return rgbaToHex3(resolved);
+    }
+    return String(resolved);
+  }
+  async function getCollectionName(collectionId) {
+    const collections = await figma.variables.getLocalVariableCollectionsAsync();
+    const collection = collections.find(
+      (item) => item.id === collectionId
+    );
+    return (collection == null ? void 0 : collection.name) || "Unknown collection";
+  }
+  async function getBoundColorEntries(node) {
+    if (!("boundVariables" in node) || !node.boundVariables) {
+      return [];
+    }
+    const resolvedModes = "resolvedVariableModes" in node ? node.resolvedVariableModes : {};
+    const entries = [];
+    const pushAliasEntry = async (field, alias, index) => {
+      if (!alias) {
+        return;
+      }
+      const variable = await figma.variables.getVariableByIdAsync(alias.id);
+      if (!variable || variable.resolvedType !== "COLOR") {
+        return;
+      }
+      const modeId = resolvedModes[variable.variableCollectionId];
+      entries.push({
+        field: index === void 0 ? field : `${field}[${index}]`,
+        collection: await getCollectionName(variable.variableCollectionId),
+        token: variable.name,
+        value: await formatVariableValue(variable, resolvedModes)
+      });
+    };
+    for (const [field, alias] of Object.entries(node.boundVariables)) {
+      if (field === "fills" || field === "strokes" || field === "effects" || field === "layoutGrids") {
+        continue;
+      }
+      if (Array.isArray(alias)) {
+        for (const [index, item] of alias.entries()) {
+          await pushAliasEntry(field, item, index);
+        }
+        continue;
+      }
+      await pushAliasEntry(field, alias);
+    }
+    if (node.boundVariables.fills) {
+      for (const [index, alias] of node.boundVariables.fills.entries()) {
+        await pushAliasEntry("fills", alias, index);
+      }
+    }
+    if (node.boundVariables.strokes) {
+      for (const [index, alias] of node.boundVariables.strokes.entries()) {
+        await pushAliasEntry("strokes", alias, index);
+      }
+    }
+    if (node.boundVariables.textRangeFills) {
+      for (const [index, alias] of node.boundVariables.textRangeFills.entries()) {
+        await pushAliasEntry("textRangeFills", alias, index);
+      }
+    }
+    return entries;
+  }
+  async function syncSelectionColorsToUI() {
+    const selection = figma.currentPage.selection;
+    if (selection.length !== 1) {
+      postSelectionColorInfo({
+        nodeName: selection.length === 0 ? "\uC120\uD0DD \uC5C6\uC74C" : `${selection.length}\uAC1C \uB808\uC774\uC5B4 \uC120\uD0DD\uB428`,
+        colors: [],
+        text: null
+      });
+      return;
+    }
+    const node = selection[0];
+    postSelectionColorInfo({
+      nodeName: node.name,
+      colors: await getBoundColorEntries(node),
+      text: node.type === "TEXT" ? node.characters : null
+    });
+  }
+  async function initializePlugin() {
+    await syncPreviewToUI();
+    await syncSelectionColorsToUI();
+    if (figma.editorType === "figma") {
+      await figma.loadAllPagesAsync();
+      figma.on("documentchange", () => {
+        void syncPreviewToUI();
+      });
+      figma.on("stylechange", () => {
+        void syncPreviewToUI();
+      });
+    }
+    figma.on("selectionchange", () => {
+      void syncSelectionColorsToUI();
+    });
+  }
+  void initializePlugin();
   figma.ui.onmessage = async (msg) => {
     try {
       if (msg.type === "UI_READY") {
+        postUiMode();
         figma.ui.postMessage({
           type: "SETTINGS_LOADED",
           settings: await loadSettings()
         });
-        syncPreviewToUI();
+        if (figma.editorType === "figma") {
+          await syncPreviewToUI();
+        }
+        await syncSelectionColorsToUI();
         return;
       }
-      if (msg.type === "PREVIEW") {
-        syncPreviewToUI();
+      if (msg.type === "PREVIEW" && figma.editorType === "figma") {
+        await syncPreviewToUI();
         return;
       }
       if (msg.type === "SAVE_SETTINGS") {
@@ -1134,8 +1287,18 @@ ${warnings}
         });
         return;
       }
+      if (msg.type === "RESIZE_UI") {
+        if (figma.editorType !== "dev" && !msg.manual) {
+          return;
+        }
+        figma.ui.resize(
+          Math.max(360, Math.min(720, Math.round(msg.width))),
+          Math.max(320, Math.min(1800, Math.round(msg.height)))
+        );
+        return;
+      }
       if (msg.type === "PUSH") {
-        const tokens = getCurrentTokens();
+        const tokens = await getCurrentTokens();
         await saveSettings({
           token: msg.token,
           repo: msg.repo,
@@ -1154,7 +1317,7 @@ ${warnings}
           commitMessage: msg.commitMessage
         });
         figma.ui.postMessage({ type: "SUCCESS", action: "push" });
-        syncPreviewToUI();
+        await syncPreviewToUI();
       }
       if (msg.type === "PULL") {
         const settings = await loadSettings();
@@ -1174,7 +1337,8 @@ ${warnings}
         });
         await applyTokens(tokens);
         figma.ui.postMessage({ type: "SUCCESS", action: "pull" });
-        syncPreviewToUI();
+        await syncPreviewToUI();
+        await syncSelectionColorsToUI();
       }
     } catch (e) {
       figma.ui.postMessage({ type: "ERROR", error: formatError(e) });

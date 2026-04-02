@@ -254,10 +254,10 @@ function serializeGrid(grid: LayoutGrid) {
   };
 }
 
-export function extractVariables(): RawVariableToken[] {
+export async function extractVariables(): Promise<RawVariableToken[]> {
   // 컬렉션 정보가 있어야 modeId를 사람이 읽을 수 있는 mode 이름으로 바꿀 수 있다.
-  const collections = figma.variables.getLocalVariableCollections();
-  const variables = figma.variables.getLocalVariables();
+  const collections = await figma.variables.getLocalVariableCollectionsAsync();
+  const variables = await figma.variables.getLocalVariablesAsync();
 
   const collectionMap = new Map(collections.map((c) => [c.id, c]));
   const variableMap = new Map(variables.map((variable) => [variable.id, variable]));
@@ -290,9 +290,9 @@ export function extractVariables(): RawVariableToken[] {
     rawValue: VariableValue,
     modeName: string,
     visited = new Set<string>()
-  ): { value: VariableValue; reference?: string } {
+  ): Promise<{ value: VariableValue; reference?: string }> {
     if (!isVariableAlias(rawValue)) {
-      return { value: rawValue };
+      return Promise.resolve({ value: rawValue });
     }
 
     if (visited.has(variable.id)) {
@@ -309,16 +309,17 @@ export function extractVariables(): RawVariableToken[] {
     const nextRawValue = getValueForModeName(referenced, modeName);
     const nextVisited = new Set(visited);
     nextVisited.add(variable.id);
-    const resolved = resolveVariableValue(referenced, nextRawValue, modeName, nextVisited);
+    return resolveVariableValue(referenced, nextRawValue, modeName, nextVisited).then((resolved) => {
     const referencePath = `${referencedCollection?.name || "global"}/${referenced.name}`;
 
-    return {
-      value: resolved.value,
-      reference: resolved.reference || referencePath,
-    };
+      return {
+        value: resolved.value,
+        reference: resolved.reference || referencePath,
+      };
+    });
   }
 
-  return variables.map((v) => {
+  return Promise.all(variables.map(async (v) => {
     const collection = collectionMap.get(v.variableCollectionId);
 
     const modes: Record<string, VariableValue> = {};
@@ -329,14 +330,14 @@ export function extractVariables(): RawVariableToken[] {
     for (const mode of collectionModes) {
       const value = v.valuesByMode[mode.modeId];
       if (value !== undefined) {
-        modes[mode.name] = resolveVariableValue(v, value, mode.name).value;
+        modes[mode.name] = (await resolveVariableValue(v, value, mode.name)).value;
       }
     }
 
     const primaryModeName = collectionModes[0]?.name;
     const primaryReference =
       primaryModeName && v.valuesByMode[collectionModes[0].modeId] !== undefined
-        ? resolveVariableValue(v, v.valuesByMode[collectionModes[0].modeId], primaryModeName).reference
+        ? (await resolveVariableValue(v, v.valuesByMode[collectionModes[0].modeId], primaryModeName)).reference
         : undefined;
 
     return {
@@ -348,12 +349,19 @@ export function extractVariables(): RawVariableToken[] {
       // transform 단계가 이 구조를 그대로 사용한다.
       modes,
     };
-  });
+  }));
 }
 
-export function extractStyleTokens(): RawStyleTokens {
+export async function extractStyleTokens(): Promise<RawStyleTokens> {
+  const [paintStyles, textStyles, effectStyles, gridStyles] = await Promise.all([
+    figma.getLocalPaintStylesAsync(),
+    figma.getLocalTextStylesAsync(),
+    figma.getLocalEffectStylesAsync(),
+    figma.getLocalGridStylesAsync(),
+  ]);
+
   return {
-    paint: figma.getLocalPaintStyles().map((style) => {
+    paint: paintStyles.map((style) => {
       const solidPaint = style.paints.length === 1 && style.paints[0].type === "SOLID"
         ? style.paints[0]
         : null;
@@ -374,7 +382,7 @@ export function extractStyleTokens(): RawStyleTokens {
         description: toDescription(style.description),
       });
     }),
-    text: figma.getLocalTextStyles().map((style) =>
+    text: textStyles.map((style) =>
       compactToken(style.name, {
         type: "typography",
         value: {
@@ -387,7 +395,7 @@ export function extractStyleTokens(): RawStyleTokens {
         description: toDescription(style.description),
       })
     ),
-    effect: figma.getLocalEffectStyles().map((style) => {
+    effect: effectStyles.map((style) => {
       const shadowEffect =
         style.effects.length === 1 &&
         (style.effects[0].type === "DROP_SHADOW" || style.effects[0].type === "INNER_SHADOW")
@@ -417,7 +425,7 @@ export function extractStyleTokens(): RawStyleTokens {
         description: toDescription(style.description),
       });
     }),
-    grid: figma.getLocalGridStyles().map((style) =>
+    grid: gridStyles.map((style) =>
       compactToken(style.name, {
         type: "grid",
         value: {
