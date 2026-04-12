@@ -147,6 +147,24 @@
         box-shadow: 0 0 0 3px rgba(23, 105, 255, 0.14);
       }
 
+      textarea {
+        width: 100%;
+        min-height: 220px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--text);
+        padding: 12px;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        resize: vertical;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(23, 105, 255, 0.14);
+      }
+
       .actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -374,6 +392,127 @@
       #resize-handle:hover {
         color: var(--primary);
       }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: rgba(15, 23, 36, 0.42);
+        backdrop-filter: blur(4px);
+      }
+
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .modal-card {
+        width: min(100%, 560px);
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 255, 0.98));
+        box-shadow: 0 24px 60px rgba(15, 23, 36, 0.24);
+        padding: 18px;
+      }
+
+      .modal-card h2 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .modal-card p {
+        margin-bottom: 12px;
+      }
+
+      .modal-summary {
+        margin-bottom: 14px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f7f9fd;
+        color: #223047;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        word-break: break-word;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      .modal-secondary {
+        background: #fff;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      .modal-primary {
+        background: var(--primary);
+        color: #fff;
+      }
+
+      .modal-loading {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .composer-meta {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .composer-row {
+        display: grid;
+        gap: 4px;
+      }
+
+      .composer-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .composer-value {
+        margin: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #f7f9fd;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        color: #223047;
+        word-break: break-word;
+      }
+
+      .result-box {
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid #c9d7f3;
+        border-radius: 12px;
+        background: #eef4ff;
+        display: grid;
+        gap: 8px;
+        font-size: 12px;
+        color: #16346d;
+      }
+
+      .result-link {
+        color: var(--primary);
+        text-decoration: none;
+        word-break: break-all;
+      }
+
+      .result-link:hover {
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
@@ -448,6 +587,57 @@
       </div>
 
       <button id="resize-handle" type="button" aria-label="Resize window">//</button>
+    </div>
+
+    <div class="modal-backdrop" id="pr-prompt-modal" hidden>
+      <div class="modal-card">
+        <h2>Create Pull Request?</h2>
+        <p>Push가 끝났습니다. 이어서 PR 작성 화면을 열 수 있습니다.</p>
+        <div class="modal-summary" id="pr-prompt-summary"></div>
+        <p class="modal-loading" id="pr-confirm-loading" hidden>PR 템플릿을 불러오는 중입니다...</p>
+        <div class="modal-actions">
+          <button class="modal-secondary" id="pr-confirm-cancel" type="button">Later</button>
+          <button class="modal-primary" id="pr-confirm-create" type="button">Create PR</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="pr-compose-modal" hidden>
+      <div class="modal-card">
+        <h2>New Pull Request</h2>
+        <p>레포지토리의 PR 템플릿을 바탕으로 제목과 본문을 수정한 뒤 바로 생성합니다.</p>
+
+        <div class="composer-meta">
+          <div class="composer-row">
+            <div class="composer-label">Target</div>
+            <p class="composer-value" id="pr-compose-repo"></p>
+          </div>
+          <div class="composer-row">
+            <div class="composer-label">Template</div>
+            <p class="composer-value" id="pr-template-path"></p>
+          </div>
+        </div>
+
+        <label>
+          PR Title
+          <input id="pr-title" placeholder="Sync tokens" />
+        </label>
+        <label>
+          PR Body
+          <textarea id="pr-body" placeholder="Describe the token changes"></textarea>
+        </label>
+
+        <div class="modal-actions">
+          <button class="modal-secondary" id="pr-compose-cancel" type="button">Close</button>
+          <button class="modal-primary" id="pr-create" type="button">Create PR</button>
+        </div>
+
+        <div class="result-box" id="pr-result" hidden>
+          <div id="pr-result-text"></div>
+          <a class="result-link" id="pr-result-link" hidden target="_blank" rel="noreferrer"></a>
+          <button class="modal-secondary" id="pr-copy-link" type="button">Copy Link</button>
+        </div>
+      </div>
     </div>
 
     <script src="ui.js"></script>

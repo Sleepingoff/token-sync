@@ -59,6 +59,24 @@ export type PushMessage = {
   commitMessage: string;
 };
 
+export type LoadPullRequestTemplateMessage = {
+  type: "LOAD_PULL_REQUEST_TEMPLATE";
+  token: string;
+  repo: string;
+  branch: string;
+  base: string;
+};
+
+export type CreatePullRequestMessage = {
+  type: "CREATE_PULL_REQUEST";
+  token: string;
+  repo: string;
+  branch: string;
+  base: string;
+  title: string;
+  body: string;
+};
+
 export type PullMessage = {
   type: "PULL";
   token: string;
@@ -97,6 +115,8 @@ export type ResizeUiMessage = {
 
 export type PluginMessage =
   | PushMessage
+  | LoadPullRequestTemplateMessage
+  | CreatePullRequestMessage
   | PullMessage
   | SaveSettingsMessage
   | PreviewMessage

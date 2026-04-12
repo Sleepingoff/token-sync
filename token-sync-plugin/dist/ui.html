@@ -147,6 +147,24 @@
         box-shadow: 0 0 0 3px rgba(23, 105, 255, 0.14);
       }
 
+      textarea {
+        width: 100%;
+        min-height: 220px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--text);
+        padding: 12px;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        resize: vertical;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(23, 105, 255, 0.14);
+      }
+
       .actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -374,6 +392,127 @@
       #resize-handle:hover {
         color: var(--primary);
       }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: rgba(15, 23, 36, 0.42);
+        backdrop-filter: blur(4px);
+      }
+
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .modal-card {
+        width: min(100%, 560px);
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 255, 0.98));
+        box-shadow: 0 24px 60px rgba(15, 23, 36, 0.24);
+        padding: 18px;
+      }
+
+      .modal-card h2 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .modal-card p {
+        margin-bottom: 12px;
+      }
+
+      .modal-summary {
+        margin-bottom: 14px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f7f9fd;
+        color: #223047;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        word-break: break-word;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      .modal-secondary {
+        background: #fff;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      .modal-primary {
+        background: var(--primary);
+        color: #fff;
+      }
+
+      .modal-loading {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .composer-meta {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .composer-row {
+        display: grid;
+        gap: 4px;
+      }
+
+      .composer-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .composer-value {
+        margin: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #f7f9fd;
+        font: 12px/1.5 "SFMono-Regular", "Menlo", "Consolas", monospace;
+        color: #223047;
+        word-break: break-word;
+      }
+
+      .result-box {
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid #c9d7f3;
+        border-radius: 12px;
+        background: #eef4ff;
+        display: grid;
+        gap: 8px;
+        font-size: 12px;
+        color: #16346d;
+      }
+
+      .result-link {
+        color: var(--primary);
+        text-decoration: none;
+        word-break: break-all;
+      }
+
+      .result-link:hover {
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
@@ -450,6 +589,57 @@
       <button id="resize-handle" type="button" aria-label="Resize window">//</button>
     </div>
 
+    <div class="modal-backdrop" id="pr-prompt-modal" hidden>
+      <div class="modal-card">
+        <h2>Create Pull Request?</h2>
+        <p>Push가 끝났습니다. 이어서 PR 작성 화면을 열 수 있습니다.</p>
+        <div class="modal-summary" id="pr-prompt-summary"></div>
+        <p class="modal-loading" id="pr-confirm-loading" hidden>PR 템플릿을 불러오는 중입니다...</p>
+        <div class="modal-actions">
+          <button class="modal-secondary" id="pr-confirm-cancel" type="button">Later</button>
+          <button class="modal-primary" id="pr-confirm-create" type="button">Create PR</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="pr-compose-modal" hidden>
+      <div class="modal-card">
+        <h2>New Pull Request</h2>
+        <p>레포지토리의 PR 템플릿을 바탕으로 제목과 본문을 수정한 뒤 바로 생성합니다.</p>
+
+        <div class="composer-meta">
+          <div class="composer-row">
+            <div class="composer-label">Target</div>
+            <p class="composer-value" id="pr-compose-repo"></p>
+          </div>
+          <div class="composer-row">
+            <div class="composer-label">Template</div>
+            <p class="composer-value" id="pr-template-path"></p>
+          </div>
+        </div>
+
+        <label>
+          PR Title
+          <input id="pr-title" placeholder="Sync tokens" />
+        </label>
+        <label>
+          PR Body
+          <textarea id="pr-body" placeholder="Describe the token changes"></textarea>
+        </label>
+
+        <div class="modal-actions">
+          <button class="modal-secondary" id="pr-compose-cancel" type="button">Close</button>
+          <button class="modal-primary" id="pr-create" type="button">Create PR</button>
+        </div>
+
+        <div class="result-box" id="pr-result" hidden>
+          <div id="pr-result-text"></div>
+          <a class="result-link" id="pr-result-link" hidden target="_blank" rel="noreferrer"></a>
+          <button class="modal-secondary" id="pr-copy-link" type="button">Copy Link</button>
+        </div>
+      </div>
+    </div>
+
     <script>
 "use strict";
 (() => {
@@ -473,6 +663,9 @@
   // src/ui.ts
   var currentEditorType = "figma";
   var manualSize = { width: 420, height: 720 };
+  var pendingPullRequestContext = null;
+  var isPullRequestLoading = false;
+  var isCreatingPullRequest = false;
   function log(msg) {
     const el = document.getElementById("log");
     el.textContent += msg + "\n";
@@ -680,6 +873,130 @@
     }
     requestResize();
   }
+  function setPullRequestLoading(nextValue) {
+    isPullRequestLoading = nextValue;
+    const button = document.getElementById("pr-confirm-create");
+    const loading = document.getElementById("pr-confirm-loading");
+    button.disabled = nextValue;
+    loading.hidden = !nextValue;
+  }
+  function setCreatePullRequestLoading(nextValue) {
+    isCreatingPullRequest = nextValue;
+    const createButton = document.getElementById("pr-create");
+    const titleInput = document.getElementById("pr-title");
+    const bodyInput = document.getElementById("pr-body");
+    createButton.disabled = nextValue;
+    titleInput.disabled = nextValue;
+    bodyInput.disabled = nextValue;
+    createButton.textContent = nextValue ? "Creating..." : "Create PR";
+  }
+  function closePullRequestPrompt() {
+    const modal = document.getElementById("pr-prompt-modal");
+    modal.hidden = true;
+    setPullRequestLoading(false);
+    requestResize();
+  }
+  function closePullRequestComposer() {
+    const modal = document.getElementById("pr-compose-modal");
+    modal.hidden = true;
+    setCreatePullRequestLoading(false);
+    requestResize();
+  }
+  function openPullRequestPrompt(context) {
+    pendingPullRequestContext = context;
+    const modal = document.getElementById("pr-prompt-modal");
+    const summary = document.getElementById("pr-prompt-summary");
+    summary.textContent = `${context.repo} | ${context.branch} -> ${context.base}`;
+    modal.hidden = false;
+    setPullRequestLoading(false);
+    requestResize();
+  }
+  function buildDefaultPullRequestTitle(context) {
+    const branchLabel = context.branch.split("/").filter(Boolean).pop() || context.branch;
+    return `Sync tokens (${branchLabel})`;
+  }
+  function openPullRequestComposer(context, body, templatePath) {
+    pendingPullRequestContext = context;
+    const modal = document.getElementById("pr-compose-modal");
+    const repoInfo = document.getElementById("pr-compose-repo");
+    const templateInfo = document.getElementById("pr-template-path");
+    const titleInput = document.getElementById("pr-title");
+    const bodyInput = document.getElementById("pr-body");
+    const resultBox = document.getElementById("pr-result");
+    const resultText = document.getElementById("pr-result-text");
+    const resultLink = document.getElementById("pr-result-link");
+    repoInfo.textContent = `${context.repo} | ${context.branch} -> ${context.base}`;
+    templateInfo.textContent = templatePath || "\uD15C\uD50C\uB9BF \uC5C6\uC74C";
+    titleInput.value = buildDefaultPullRequestTitle(context);
+    bodyInput.value = body;
+    resultBox.hidden = true;
+    resultText.textContent = "";
+    resultLink.hidden = true;
+    resultLink.href = "";
+    resultLink.textContent = "";
+    modal.hidden = false;
+    setCreatePullRequestLoading(false);
+    requestResize();
+  }
+  function showPullRequestCreated(message) {
+    const resultBox = document.getElementById("pr-result");
+    const resultText = document.getElementById("pr-result-text");
+    const link = document.getElementById("pr-result-link");
+    resultBox.hidden = false;
+    resultText.textContent = `PR #${message.number} \uC0DD\uC131 \uC644\uB8CC`;
+    link.href = message.url;
+    link.textContent = message.url;
+    link.hidden = false;
+    log(`PR #${message.number} \uC0DD\uC131 \uC644\uB8CC`);
+    requestResize();
+  }
+  function loadPullRequestTemplate() {
+    if (!pendingPullRequestContext || isPullRequestLoading) {
+      return;
+    }
+    setPullRequestLoading(true);
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "LOAD_PULL_REQUEST_TEMPLATE",
+          token: pendingPullRequestContext.token,
+          repo: pendingPullRequestContext.repo,
+          branch: pendingPullRequestContext.branch,
+          base: pendingPullRequestContext.base
+        }
+      },
+      "*"
+    );
+  }
+  function submitPullRequest() {
+    if (!pendingPullRequestContext || isCreatingPullRequest) {
+      return;
+    }
+    const titleInput = document.getElementById("pr-title");
+    const bodyInput = document.getElementById("pr-body");
+    setCreatePullRequestLoading(true);
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "CREATE_PULL_REQUEST",
+          token: pendingPullRequestContext.token,
+          repo: pendingPullRequestContext.repo,
+          branch: pendingPullRequestContext.branch,
+          base: pendingPullRequestContext.base,
+          title: titleInput.value,
+          body: bodyInput.value
+        }
+      },
+      "*"
+    );
+  }
+  function copyPullRequestUrl() {
+    const link = document.getElementById("pr-result-link");
+    if (!link.href) {
+      return;
+    }
+    void navigator.clipboard.writeText(link.href);
+  }
   function getPluginMessage(data) {
     if (!data || typeof data !== "object") {
       return null;
@@ -747,32 +1064,78 @@
     }, 1200);
     requestResize();
   };
+  document.getElementById("pr-confirm-cancel").onclick = () => {
+    closePullRequestPrompt();
+  };
+  document.getElementById("pr-confirm-create").onclick = () => {
+    loadPullRequestTemplate();
+  };
+  document.getElementById("pr-compose-cancel").onclick = () => {
+    closePullRequestComposer();
+  };
+  document.getElementById("pr-create").onclick = () => {
+    submitPullRequest();
+  };
+  document.getElementById("pr-copy-link").onclick = () => {
+    copyPullRequestUrl();
+  };
   for (const id of ["token", "repo", "branch", "base", "path", "commit-message"]) {
     document.getElementById(id).addEventListener("change", saveSettings);
     document.getElementById(id).addEventListener("blur", saveSettings);
   }
   function handlePluginMessage(event) {
-    var _a;
+    var _a, _b;
     const msg = getPluginMessage(event.data);
     if (!msg || !msg.type) {
       return;
     }
     if (msg.type === "SUCCESS") {
-      log(msg.action === "pull" ? "Pull \uC644\uB8CC" : "Push \uC644\uB8CC");
+      if (msg.action === "pull") {
+        log("Pull \uC644\uB8CC");
+        return;
+      }
+      log("Push \uC644\uB8CC");
+      const settings = getSettings();
+      openPullRequestPrompt({
+        token: settings.token,
+        repo: msg.repo || settings.repo,
+        branch: msg.branch || settings.branch,
+        base: msg.base || settings.base
+      });
+      return;
     }
     if (msg.type === "PREVIEW_RESULT") {
       setPreview((_a = msg.content) != null ? _a : "{}");
+      return;
     }
     if (msg.type === "SETTINGS_LOADED") {
       applySettings(msg.settings);
+      return;
     }
     if (msg.type === "UI_MODE") {
       setUiMode(msg);
+      return;
     }
     if (msg.type === "SELECTION_COLOR_INFO") {
       setSelectionColorInfo(msg);
+      return;
+    }
+    if (msg.type === "PULL_REQUEST_TEMPLATE_LOADED") {
+      if (!pendingPullRequestContext) {
+        return;
+      }
+      closePullRequestPrompt();
+      openPullRequestComposer(pendingPullRequestContext, msg.body || "", (_b = msg.path) != null ? _b : null);
+      return;
+    }
+    if (msg.type === "PULL_REQUEST_CREATED") {
+      setCreatePullRequestLoading(false);
+      showPullRequestCreated(msg);
+      return;
     }
     if (msg.type === "ERROR") {
+      setPullRequestLoading(false);
+      setCreatePullRequestLoading(false);
       log("\uC5D0\uB7EC: " + msg.error);
     }
   }

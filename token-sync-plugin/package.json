@@ -1,6 +1,6 @@
 {
   "name": "token-sync-plugin",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "scripts": {
     "build": "node build.js",
     "watch": "node build.js --watch",

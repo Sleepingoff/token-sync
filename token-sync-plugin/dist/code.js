@@ -659,15 +659,7 @@
     if (res.ok) {
       return res.json();
     }
-    let message = `${res.status} ${res.statusText}`;
-    try {
-      const errorData = await res.json();
-      if (errorData.message) {
-        message = errorData.message;
-      }
-    } catch (_error) {
-    }
-    throw new Error(`GitHub \uC694\uCCAD \uC2E4\uD328: ${message}`);
+    throw new Error(`GitHub \uC694\uCCAD \uC2E4\uD328: ${await getGitHubErrorMessage(res)}`);
   }
   async function getGitHubErrorMessage(res) {
     let message = `${res.status} ${res.statusText}`;
@@ -675,6 +667,15 @@
       const errorData = await res.json();
       if (errorData.message) {
         message = errorData.message;
+      }
+      if (Array.isArray(errorData.errors) && errorData.errors.length > 0) {
+        const details = errorData.errors.map((error) => {
+          const parts = [error.field, error.code, error.message].filter(Boolean);
+          return parts.join(": ");
+        }).filter(Boolean).join(" | ");
+        if (details) {
+          message = `${message} (${details})`;
+        }
       }
     } catch (_error) {
     }
@@ -723,6 +724,105 @@
       token,
       commitMessage: normalizedCommitMessage
     });
+    return {
+      branch: resolved.branch,
+      base: resolved.base,
+      usedDefaultFallback: resolved.usedDefaultFallback
+    };
+  }
+  async function loadPullRequestTemplate({
+    token,
+    repo,
+    branch,
+    base
+  }) {
+    const { owner, repoName, normalizedBranch, normalizedBase } = parsePullRequestRequest({
+      token,
+      repo,
+      branch,
+      base
+    });
+    const resolved = await resolvePushBranch({
+      owner,
+      repo: repoName,
+      branch: normalizedBranch,
+      base: normalizedBase,
+      token
+    });
+    const refCandidates = Array.from(/* @__PURE__ */ new Set([resolved.branch, resolved.base]));
+    const pathCandidates = [
+      ".github/pull_request_template.md",
+      ".github/PULL_REQUEST_TEMPLATE.md",
+      "docs/pull_request_template.md",
+      "pull_request_template.md"
+    ];
+    for (const ref of refCandidates) {
+      for (const path of pathCandidates) {
+        const content = await fetchOptionalTextFile({
+          owner,
+          repo: repoName,
+          path,
+          ref,
+          token
+        });
+        if (content !== null) {
+          return {
+            body: content,
+            path
+          };
+        }
+      }
+      const directoryTemplate = await fetchPullRequestTemplateFromDirectory({
+        owner,
+        repo: repoName,
+        ref,
+        token
+      });
+      if (directoryTemplate) {
+        return directoryTemplate;
+      }
+    }
+    return {
+      body: "",
+      path: null
+    };
+  }
+  async function createPullRequest({
+    token,
+    repo,
+    branch,
+    base,
+    title,
+    body
+  }) {
+    const { owner, repoName, normalizedBranch, normalizedBase } = parsePullRequestRequest({
+      token,
+      repo,
+      branch,
+      base
+    });
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle) {
+      throw new Error("PR \uC81C\uBAA9\uC744 \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/pulls`, {
+      method: "POST",
+      headers: {
+        Authorization: `token ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        title: normalizedTitle,
+        head: normalizedBranch,
+        base: normalizedBase,
+        body
+      })
+    });
+    const data = await parseGitHubResponse(res);
+    return {
+      number: data.number,
+      url: data.html_url
+    };
   }
   async function pullFromGitHub({
     token,
@@ -766,6 +866,35 @@
       }
     );
     return res.status === 200;
+  }
+  function parsePullRequestRequest({
+    token,
+    repo,
+    branch,
+    base
+  }) {
+    const normalizedRepo = normalizeRepoPart(repo);
+    const normalizedBranch = normalizeRepoPart(branch);
+    const normalizedBase = normalizeRepoPart(base);
+    const [owner, repoName] = normalizedRepo.split("/");
+    if (!token.trim()) {
+      throw new Error("GitHub \uD1A0\uD070\uC744 \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    if (!owner || !repoName) {
+      throw new Error('\uC800\uC7A5\uC18C \uD615\uC2DD\uC774 \uC798\uBABB\uB418\uC5C8\uC2B5\uB2C8\uB2E4. "owner/repo" \uD615\uC2DD\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.');
+    }
+    if (!normalizedBranch) {
+      throw new Error("\uBE0C\uB79C\uCE58\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    if (!normalizedBase) {
+      throw new Error("\uAE30\uC900 \uBE0C\uB79C\uCE58\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.");
+    }
+    return {
+      owner,
+      repoName,
+      normalizedBranch,
+      normalizedBase
+    };
   }
   async function getDefaultBranch(owner, repo, token) {
     const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
@@ -917,6 +1046,60 @@
     );
     await parseGitHubResponse(updateRes);
   }
+  async function fetchOptionalTextFile({
+    owner,
+    repo,
+    path,
+    ref,
+    token
+  }) {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${ref}`,
+      {
+        headers: { Authorization: `token ${token}` }
+      }
+    );
+    if (res.status === 404) {
+      return null;
+    }
+    const data = await parseGitHubResponse(res);
+    return decodeUtf8(base64ToBytes(data.content));
+  }
+  async function fetchPullRequestTemplateFromDirectory({
+    owner,
+    repo,
+    ref,
+    token
+  }) {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/.github/PULL_REQUEST_TEMPLATE?ref=${ref}`,
+      {
+        headers: { Authorization: `token ${token}` }
+      }
+    );
+    if (res.status === 404) {
+      return null;
+    }
+    const entries = await parseGitHubResponse(res);
+    const markdownTemplate = entries.filter((entry) => entry.type === "file" && /\.md$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name))[0];
+    if (!markdownTemplate) {
+      return null;
+    }
+    const content = await fetchOptionalTextFile({
+      owner,
+      repo,
+      path: markdownTemplate.path,
+      ref,
+      token
+    });
+    if (content === null) {
+      return null;
+    }
+    return {
+      body: content,
+      path: markdownTemplate.path
+    };
+  }
 
   // src/core/apply.ts
   function isTokenLeaf2(node) {
@@ -1035,7 +1218,7 @@
   var SETTINGS_KEY = "token-sync-settings";
   function formatError(error) {
     if (error instanceof Error) {
-      return error.stack || `${error.name}: ${error.message}`;
+      return error.message || error.stack || error.name;
     }
     return String(error);
   }
@@ -1307,7 +1490,7 @@ ${warnings}
           path: msg.path,
           commitMessage: msg.commitMessage
         });
-        await pushToGitHub({
+        const pushResult = await pushToGitHub({
           token: msg.token,
           repo: msg.repo,
           branch: msg.branch,
@@ -1316,8 +1499,47 @@ ${warnings}
           content: tokens,
           commitMessage: msg.commitMessage
         });
-        figma.ui.postMessage({ type: "SUCCESS", action: "push" });
+        figma.ui.postMessage({
+          type: "SUCCESS",
+          action: "push",
+          repo: msg.repo,
+          branch: pushResult.branch,
+          base: pushResult.base
+        });
         await syncPreviewToUI();
+        return;
+      }
+      if (msg.type === "LOAD_PULL_REQUEST_TEMPLATE") {
+        const template = await loadPullRequestTemplate({
+          token: msg.token,
+          repo: msg.repo,
+          branch: msg.branch,
+          base: msg.base
+        });
+        figma.ui.postMessage({
+          type: "PULL_REQUEST_TEMPLATE_LOADED",
+          body: template.body,
+          path: template.path,
+          branch: msg.branch,
+          base: msg.base
+        });
+        return;
+      }
+      if (msg.type === "CREATE_PULL_REQUEST") {
+        const pullRequest = await createPullRequest({
+          token: msg.token,
+          repo: msg.repo,
+          branch: msg.branch,
+          base: msg.base,
+          title: msg.title,
+          body: msg.body
+        });
+        figma.ui.postMessage({
+          type: "PULL_REQUEST_CREATED",
+          number: pullRequest.number,
+          url: pullRequest.url
+        });
+        return;
       }
       if (msg.type === "PULL") {
         const settings = await loadSettings();

@@ -13,10 +13,27 @@ type PushToGitHubParams = GitHubRequest & {
   commitMessage: string;
 };
 
+type PullRequestRequest = {
+  token: string;
+  repo: string;
+  branch: string;
+  base: string;
+};
+
 type ResolvedBranch = {
   branch: string;
   base: string;
   usedDefaultFallback: boolean;
+};
+
+type PullRequestTemplateResult = {
+  body: string;
+  path: string | null;
+};
+
+type CreatedPullRequest = {
+  number: number;
+  url: string;
 };
 
 function normalizeRepoPart(value: string) {
@@ -175,27 +192,37 @@ async function parseGitHubResponse<T>(res: Response): Promise<T> {
     return res.json() as Promise<T>;
   }
 
-  let message = `${res.status} ${res.statusText}`;
-
-  try {
-    const errorData = (await res.json()) as { message?: string };
-    if (errorData.message) {
-      message = errorData.message;
-    }
-  } catch (_error) {
-    // 응답 본문이 JSON이 아니면 상태 코드 메시지만 사용한다.
-  }
-
-  throw new Error(`GitHub 요청 실패: ${message}`);
+  throw new Error(`GitHub 요청 실패: ${await getGitHubErrorMessage(res)}`);
 }
 
 async function getGitHubErrorMessage(res: Response) {
   let message = `${res.status} ${res.statusText}`;
 
   try {
-    const errorData = (await res.json()) as { message?: string };
+    const errorData = (await res.json()) as {
+      message?: string;
+      errors?: Array<{
+        message?: string;
+        code?: string;
+        field?: string;
+      }>;
+    };
     if (errorData.message) {
       message = errorData.message;
+    }
+
+    if (Array.isArray(errorData.errors) && errorData.errors.length > 0) {
+      const details = errorData.errors
+        .map((error) => {
+          const parts = [error.field, error.code, error.message].filter(Boolean);
+          return parts.join(": ");
+        })
+        .filter(Boolean)
+        .join(" | ");
+
+      if (details) {
+        message = `${message} (${details})`;
+      }
     }
   } catch (_error) {
     // 응답 본문이 JSON이 아니면 상태 코드 메시지만 사용한다.
@@ -254,6 +281,119 @@ export async function pushToGitHub({
     token,
     commitMessage: normalizedCommitMessage,
   });
+
+  return {
+    branch: resolved.branch,
+    base: resolved.base,
+    usedDefaultFallback: resolved.usedDefaultFallback,
+  };
+}
+
+export async function loadPullRequestTemplate({
+  token,
+  repo,
+  branch,
+  base,
+}: PullRequestRequest): Promise<PullRequestTemplateResult> {
+  const { owner, repoName, normalizedBranch, normalizedBase } = parsePullRequestRequest({
+    token,
+    repo,
+    branch,
+    base,
+  });
+
+  const resolved = await resolvePushBranch({
+    owner,
+    repo: repoName,
+    branch: normalizedBranch,
+    base: normalizedBase,
+    token,
+  });
+
+  const refCandidates = Array.from(new Set([resolved.branch, resolved.base]));
+  const pathCandidates = [
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "docs/pull_request_template.md",
+    "pull_request_template.md",
+  ];
+
+  for (const ref of refCandidates) {
+    for (const path of pathCandidates) {
+      const content = await fetchOptionalTextFile({
+        owner,
+        repo: repoName,
+        path,
+        ref,
+        token,
+      });
+
+      if (content !== null) {
+        return {
+          body: content,
+          path,
+        };
+      }
+    }
+
+    const directoryTemplate = await fetchPullRequestTemplateFromDirectory({
+      owner,
+      repo: repoName,
+      ref,
+      token,
+    });
+
+    if (directoryTemplate) {
+      return directoryTemplate;
+    }
+  }
+
+  return {
+    body: "",
+    path: null,
+  };
+}
+
+export async function createPullRequest({
+  token,
+  repo,
+  branch,
+  base,
+  title,
+  body,
+}: PullRequestRequest & { title: string; body: string }): Promise<CreatedPullRequest> {
+  const { owner, repoName, normalizedBranch, normalizedBase } = parsePullRequestRequest({
+    token,
+    repo,
+    branch,
+    base,
+  });
+  const normalizedTitle = title.trim();
+
+  if (!normalizedTitle) {
+    throw new Error("PR 제목을 입력해 주세요.");
+  }
+
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/pulls`, {
+    method: "POST",
+    headers: {
+      Authorization: `token ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      title: normalizedTitle,
+      head: normalizedBranch,
+      base: normalizedBase,
+      body,
+    }),
+  });
+
+  const data = await parseGitHubResponse<{ number: number; html_url: string }>(res);
+
+  return {
+    number: data.number,
+    url: data.html_url,
+  };
 }
 
 export async function pullFromGitHub({
@@ -314,6 +454,41 @@ async function checkBranch(
   );
 
   return res.status === 200;
+}
+
+function parsePullRequestRequest({
+  token,
+  repo,
+  branch,
+  base,
+}: PullRequestRequest) {
+  const normalizedRepo = normalizeRepoPart(repo);
+  const normalizedBranch = normalizeRepoPart(branch);
+  const normalizedBase = normalizeRepoPart(base);
+  const [owner, repoName] = normalizedRepo.split("/");
+
+  if (!token.trim()) {
+    throw new Error("GitHub 토큰을 입력해 주세요.");
+  }
+
+  if (!owner || !repoName) {
+    throw new Error('저장소 형식이 잘못되었습니다. "owner/repo" 형식이어야 합니다.');
+  }
+
+  if (!normalizedBranch) {
+    throw new Error("브랜치를 입력해 주세요.");
+  }
+
+  if (!normalizedBase) {
+    throw new Error("기준 브랜치를 입력해 주세요.");
+  }
+
+  return {
+    owner,
+    repoName,
+    normalizedBranch,
+    normalizedBase,
+  };
 }
 
 async function getDefaultBranch(owner: string, repo: string, token: string) {
@@ -537,4 +712,81 @@ async function uploadFile({
   );
 
   await parseGitHubResponse(updateRes);
+}
+
+async function fetchOptionalTextFile({
+  owner,
+  repo,
+  path,
+  ref,
+  token,
+}: {
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+  token: string;
+}) {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${ref}`,
+    {
+      headers: { Authorization: `token ${token}` },
+    }
+  );
+
+  if (res.status === 404) {
+    return null;
+  }
+
+  const data = await parseGitHubResponse<{ content: string }>(res);
+  return decodeUtf8(base64ToBytes(data.content));
+}
+
+async function fetchPullRequestTemplateFromDirectory({
+  owner,
+  repo,
+  ref,
+  token,
+}: {
+  owner: string;
+  repo: string;
+  ref: string;
+  token: string;
+}) {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/.github/PULL_REQUEST_TEMPLATE?ref=${ref}`,
+    {
+      headers: { Authorization: `token ${token}` },
+    }
+  );
+
+  if (res.status === 404) {
+    return null;
+  }
+
+  const entries = await parseGitHubResponse<Array<{ type: string; name: string; path: string }>>(res);
+  const markdownTemplate = entries
+    .filter((entry) => entry.type === "file" && /\.md$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name))[0];
+
+  if (!markdownTemplate) {
+    return null;
+  }
+
+  const content = await fetchOptionalTextFile({
+    owner,
+    repo,
+    path: markdownTemplate.path,
+    ref,
+    token,
+  });
+
+  if (content === null) {
+    return null;
+  }
+
+  return {
+    body: content,
+    path: markdownTemplate.path,
+  };
 }

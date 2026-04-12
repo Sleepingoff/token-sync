@@ -20,6 +20,9 @@
   // src/ui.ts
   var currentEditorType = "figma";
   var manualSize = { width: 420, height: 720 };
+  var pendingPullRequestContext = null;
+  var isPullRequestLoading = false;
+  var isCreatingPullRequest = false;
   function log(msg) {
     const el = document.getElementById("log");
     el.textContent += msg + "\n";
@@ -227,6 +230,130 @@
     }
     requestResize();
   }
+  function setPullRequestLoading(nextValue) {
+    isPullRequestLoading = nextValue;
+    const button = document.getElementById("pr-confirm-create");
+    const loading = document.getElementById("pr-confirm-loading");
+    button.disabled = nextValue;
+    loading.hidden = !nextValue;
+  }
+  function setCreatePullRequestLoading(nextValue) {
+    isCreatingPullRequest = nextValue;
+    const createButton = document.getElementById("pr-create");
+    const titleInput = document.getElementById("pr-title");
+    const bodyInput = document.getElementById("pr-body");
+    createButton.disabled = nextValue;
+    titleInput.disabled = nextValue;
+    bodyInput.disabled = nextValue;
+    createButton.textContent = nextValue ? "Creating..." : "Create PR";
+  }
+  function closePullRequestPrompt() {
+    const modal = document.getElementById("pr-prompt-modal");
+    modal.hidden = true;
+    setPullRequestLoading(false);
+    requestResize();
+  }
+  function closePullRequestComposer() {
+    const modal = document.getElementById("pr-compose-modal");
+    modal.hidden = true;
+    setCreatePullRequestLoading(false);
+    requestResize();
+  }
+  function openPullRequestPrompt(context) {
+    pendingPullRequestContext = context;
+    const modal = document.getElementById("pr-prompt-modal");
+    const summary = document.getElementById("pr-prompt-summary");
+    summary.textContent = `${context.repo} | ${context.branch} -> ${context.base}`;
+    modal.hidden = false;
+    setPullRequestLoading(false);
+    requestResize();
+  }
+  function buildDefaultPullRequestTitle(context) {
+    const branchLabel = context.branch.split("/").filter(Boolean).pop() || context.branch;
+    return `Sync tokens (${branchLabel})`;
+  }
+  function openPullRequestComposer(context, body, templatePath) {
+    pendingPullRequestContext = context;
+    const modal = document.getElementById("pr-compose-modal");
+    const repoInfo = document.getElementById("pr-compose-repo");
+    const templateInfo = document.getElementById("pr-template-path");
+    const titleInput = document.getElementById("pr-title");
+    const bodyInput = document.getElementById("pr-body");
+    const resultBox = document.getElementById("pr-result");
+    const resultText = document.getElementById("pr-result-text");
+    const resultLink = document.getElementById("pr-result-link");
+    repoInfo.textContent = `${context.repo} | ${context.branch} -> ${context.base}`;
+    templateInfo.textContent = templatePath || "\uD15C\uD50C\uB9BF \uC5C6\uC74C";
+    titleInput.value = buildDefaultPullRequestTitle(context);
+    bodyInput.value = body;
+    resultBox.hidden = true;
+    resultText.textContent = "";
+    resultLink.hidden = true;
+    resultLink.href = "";
+    resultLink.textContent = "";
+    modal.hidden = false;
+    setCreatePullRequestLoading(false);
+    requestResize();
+  }
+  function showPullRequestCreated(message) {
+    const resultBox = document.getElementById("pr-result");
+    const resultText = document.getElementById("pr-result-text");
+    const link = document.getElementById("pr-result-link");
+    resultBox.hidden = false;
+    resultText.textContent = `PR #${message.number} \uC0DD\uC131 \uC644\uB8CC`;
+    link.href = message.url;
+    link.textContent = message.url;
+    link.hidden = false;
+    log(`PR #${message.number} \uC0DD\uC131 \uC644\uB8CC`);
+    requestResize();
+  }
+  function loadPullRequestTemplate() {
+    if (!pendingPullRequestContext || isPullRequestLoading) {
+      return;
+    }
+    setPullRequestLoading(true);
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "LOAD_PULL_REQUEST_TEMPLATE",
+          token: pendingPullRequestContext.token,
+          repo: pendingPullRequestContext.repo,
+          branch: pendingPullRequestContext.branch,
+          base: pendingPullRequestContext.base
+        }
+      },
+      "*"
+    );
+  }
+  function submitPullRequest() {
+    if (!pendingPullRequestContext || isCreatingPullRequest) {
+      return;
+    }
+    const titleInput = document.getElementById("pr-title");
+    const bodyInput = document.getElementById("pr-body");
+    setCreatePullRequestLoading(true);
+    parent.postMessage(
+      {
+        pluginMessage: {
+          type: "CREATE_PULL_REQUEST",
+          token: pendingPullRequestContext.token,
+          repo: pendingPullRequestContext.repo,
+          branch: pendingPullRequestContext.branch,
+          base: pendingPullRequestContext.base,
+          title: titleInput.value,
+          body: bodyInput.value
+        }
+      },
+      "*"
+    );
+  }
+  function copyPullRequestUrl() {
+    const link = document.getElementById("pr-result-link");
+    if (!link.href) {
+      return;
+    }
+    void navigator.clipboard.writeText(link.href);
+  }
   function getPluginMessage(data) {
     if (!data || typeof data !== "object") {
       return null;
@@ -294,32 +421,78 @@
     }, 1200);
     requestResize();
   };
+  document.getElementById("pr-confirm-cancel").onclick = () => {
+    closePullRequestPrompt();
+  };
+  document.getElementById("pr-confirm-create").onclick = () => {
+    loadPullRequestTemplate();
+  };
+  document.getElementById("pr-compose-cancel").onclick = () => {
+    closePullRequestComposer();
+  };
+  document.getElementById("pr-create").onclick = () => {
+    submitPullRequest();
+  };
+  document.getElementById("pr-copy-link").onclick = () => {
+    copyPullRequestUrl();
+  };
   for (const id of ["token", "repo", "branch", "base", "path", "commit-message"]) {
     document.getElementById(id).addEventListener("change", saveSettings);
     document.getElementById(id).addEventListener("blur", saveSettings);
   }
   function handlePluginMessage(event) {
-    var _a;
+    var _a, _b;
     const msg = getPluginMessage(event.data);
     if (!msg || !msg.type) {
       return;
     }
     if (msg.type === "SUCCESS") {
-      log(msg.action === "pull" ? "Pull \uC644\uB8CC" : "Push \uC644\uB8CC");
+      if (msg.action === "pull") {
+        log("Pull \uC644\uB8CC");
+        return;
+      }
+      log("Push \uC644\uB8CC");
+      const settings = getSettings();
+      openPullRequestPrompt({
+        token: settings.token,
+        repo: msg.repo || settings.repo,
+        branch: msg.branch || settings.branch,
+        base: msg.base || settings.base
+      });
+      return;
     }
     if (msg.type === "PREVIEW_RESULT") {
       setPreview((_a = msg.content) != null ? _a : "{}");
+      return;
     }
     if (msg.type === "SETTINGS_LOADED") {
       applySettings(msg.settings);
+      return;
     }
     if (msg.type === "UI_MODE") {
       setUiMode(msg);
+      return;
     }
     if (msg.type === "SELECTION_COLOR_INFO") {
       setSelectionColorInfo(msg);
+      return;
+    }
+    if (msg.type === "PULL_REQUEST_TEMPLATE_LOADED") {
+      if (!pendingPullRequestContext) {
+        return;
+      }
+      closePullRequestPrompt();
+      openPullRequestComposer(pendingPullRequestContext, msg.body || "", (_b = msg.path) != null ? _b : null);
+      return;
+    }
+    if (msg.type === "PULL_REQUEST_CREATED") {
+      setCreatePullRequestLoading(false);
+      showPullRequestCreated(msg);
+      return;
     }
     if (msg.type === "ERROR") {
+      setPullRequestLoading(false);
+      setCreatePullRequestLoading(false);
       log("\uC5D0\uB7EC: " + msg.error);
     }
   }

@@ -1,6 +1,11 @@
 import { extractStyleTokens, extractVariables } from "./core/extract";
 import { transformTokens, transformTokensWithDiagnostics } from "./core/transform";
-import { pushToGitHub, pullFromGitHub } from "./core/github";
+import {
+  createPullRequest,
+  loadPullRequestTemplate,
+  pullFromGitHub,
+  pushToGitHub,
+} from "./core/github";
 import { applyTokens } from "./core/apply";
 import { PersistedSettings, PluginMessage, TokenDocument } from "./core/types";
 
@@ -27,7 +32,7 @@ type SelectionInfoPayload = {
 
 function formatError(error: unknown) {
   if (error instanceof Error) {
-    return error.stack || `${error.name}: ${error.message}`;
+    return error.message || error.stack || error.name;
   }
 
   return String(error);
@@ -384,7 +389,7 @@ figma.ui.onmessage = async (msg: PluginMessage) => {
         commitMessage: msg.commitMessage,
       });
 
-      await pushToGitHub({
+      const pushResult = await pushToGitHub({
         token: msg.token,
         repo: msg.repo,
         branch: msg.branch,
@@ -394,8 +399,51 @@ figma.ui.onmessage = async (msg: PluginMessage) => {
         commitMessage: msg.commitMessage,
       });
 
-      figma.ui.postMessage({ type: "SUCCESS", action: "push" });
+      figma.ui.postMessage({
+        type: "SUCCESS",
+        action: "push",
+        repo: msg.repo,
+        branch: pushResult.branch,
+        base: pushResult.base,
+      });
       await syncPreviewToUI();
+      return;
+    }
+
+    if (msg.type === "LOAD_PULL_REQUEST_TEMPLATE") {
+      const template = await loadPullRequestTemplate({
+        token: msg.token,
+        repo: msg.repo,
+        branch: msg.branch,
+        base: msg.base,
+      });
+
+      figma.ui.postMessage({
+        type: "PULL_REQUEST_TEMPLATE_LOADED",
+        body: template.body,
+        path: template.path,
+        branch: msg.branch,
+        base: msg.base,
+      });
+      return;
+    }
+
+    if (msg.type === "CREATE_PULL_REQUEST") {
+      const pullRequest = await createPullRequest({
+        token: msg.token,
+        repo: msg.repo,
+        branch: msg.branch,
+        base: msg.base,
+        title: msg.title,
+        body: msg.body,
+      });
+
+      figma.ui.postMessage({
+        type: "PULL_REQUEST_CREATED",
+        number: pullRequest.number,
+        url: pullRequest.url,
+      });
+      return;
     }
 
     if (msg.type === "PULL") {
